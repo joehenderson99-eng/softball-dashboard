@@ -87,7 +87,7 @@ if (range === "today") {
   endDate = endOfDay(addDays(now, 7));
 }
 
-  return Response.json({ games: allGames });
+  return { startDate, endDate };
 }
 
 function extractNcaaGames(payload) {
