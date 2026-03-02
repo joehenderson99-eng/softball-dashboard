@@ -27,49 +27,65 @@ function normalizeStatus(s) {
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
-  const fromIso = searchParams.get("from");
-  const toIso = searchParams.get("to");
-  if (!fromIso || !toIso) {
-    return Response.json({ games: [], error: "Missing from/to" }, { status: 400 });
+const range = (searchParams.get("range") || "week").toLowerCase();
+
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function endOfDay(d) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function addDays(d, days) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function getSeasonRange(now = new Date()) {
+  // Softball "season-ish" window: Feb 1 -> Aug 1.
+  // If we're past Aug 1, use next year's season.
+  const y = now.getFullYear();
+  const feb1 = new Date(y, 1, 1); // Feb=1
+  const aug1 = new Date(y, 7, 1); // Aug=7
+
+  if (now > aug1) {
+    return { start: startOfDay(new Date(y + 1, 1, 1)), end: endOfDay(new Date(y + 1, 7, 1)) };
   }
-
-  const from = new Date(fromIso);
-  const to = new Date(toIso);
-  const dates = [];
-  for (
-    let d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-    d < to;
-    d.setDate(d.getDate() + 1)
-  ) {
-    dates.push(new Date(d));
+  // If it's before Feb 1, still show upcoming season.
+  if (now < feb1) {
+    return { start: startOfDay(feb1), end: endOfDay(aug1) };
   }
+  // During season: from today to Aug 1.
+  return { start: startOfDay(now), end: endOfDay(aug1) };
+}
 
-  const allGames = [];
+const now = new Date();
+let startDate, endDate;
 
-  for (const d of dates) {
-    const dateStr = isoDateOnly(d.toISOString());
-    const y = dateStr.slice(0, 4);
-    const m = dateStr.slice(5, 7);
-    const day = dateStr.slice(8, 10);
-
-    const ncaaD1Path = `/scoreboard/softball/d1/${y}/${m}/${day}`;
-    const ncaaD2Path = `/scoreboard/softball/d2/${y}/${m}/${day}`;
-
-    const [ncaaD1, ncaaD2, espn] = await Promise.allSettled([
-      fetchJson(`${NCAA_API}${ncaaD1Path}`),
-      fetchJson(`${NCAA_API}${ncaaD2Path}`),
-      fetchJson(`${ESPN_SCOREBOARD}?dates=${y}${m}${day}`)
-    ]);
-
-    const ncaaItems = [];
-    if (ncaaD1.status === "fulfilled") ncaaItems.push(...extractNcaaGames(ncaaD1.value));
-    if (ncaaD2.status === "fulfilled") ncaaItems.push(...extractNcaaGames(ncaaD2.value));
-
-    const espnItems = espn.status === "fulfilled" ? extractEspnGames(espn.value) : [];
-
-    const merged = mergeGames(ncaaItems, espnItems);
-    allGames.push(...merged);
-  }
+if (range === "today") {
+  startDate = startOfDay(now);
+  endDate = endOfDay(now);
+} else if (range === "week") {
+  startDate = startOfDay(now);
+  endDate = endOfDay(addDays(now, 7));
+} else if (range === "month" || range === "30") {
+  startDate = startOfDay(now);
+  endDate = endOfDay(addDays(now, 30));
+} else if (range === "season") {
+  const r = getSeasonRange(now);
+  startDate = r.start;
+  endDate = r.end;
+} else {
+  // fallback
+  startDate = startOfDay(now);
+  endDate = endOfDay(addDays(now, 7));
+}
 
   return Response.json({ games: allGames });
 }
