@@ -24,16 +24,24 @@ function formatLocalDate(isoString) {
   }
 }
 
+function normalizeLabel(name) {
+  if (!name) return "";
+  return String(name).trim().replace(/\s+/g, " ");
+}
+
 export default function Page() {
   const [view, setView] = useState("today"); // today | week | month | season
   const [liveOnly, setLiveOnly] = useState(false);
 
-  // selectedTeams = your active filter selection
+  // selectedTeams = active filter selection
   // IMPORTANT: empty set => show ALL games
   const [selectedTeams, setSelectedTeams] = useState(() => new Set());
 
-  // pinnedTeams = your saved shortlist (separate from selection)
+  // pinnedTeams = saved shortlist (always shown)
   const [pinnedTeams, setPinnedTeams] = useState(() => new Set(["Stanford", "Oklahoma"]));
+
+  // show/hide the "All teams" list
+  const [showAllTeams, setShowAllTeams] = useState(false);
 
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -51,6 +59,7 @@ export default function Page() {
 
       if (parsed?.view) setView(parsed.view);
       if (typeof parsed?.liveOnly === "boolean") setLiveOnly(parsed.liveOnly);
+      if (typeof parsed?.showAllTeams === "boolean") setShowAllTeams(parsed.showAllTeams);
 
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
       if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
@@ -67,6 +76,7 @@ export default function Page() {
         JSON.stringify({
           view,
           liveOnly,
+          showAllTeams,
           selectedTeams: Array.from(selectedTeams),
           pinnedTeams: Array.from(pinnedTeams)
         })
@@ -74,7 +84,7 @@ export default function Page() {
     } catch {
       // ignore
     }
-  }, [view, liveOnly, selectedTeams, pinnedTeams]);
+  }, [view, liveOnly, showAllTeams, selectedTeams, pinnedTeams]);
 
   async function fetchGames() {
     setLoading(true);
@@ -106,17 +116,29 @@ export default function Page() {
   const allTeams = useMemo(() => {
     const s = new Set();
     for (const g of games) {
-      if (g?.homeTeam) s.add(g.homeTeam);
-      if (g?.awayTeam) s.add(g.awayTeam);
+      if (g?.homeTeam) s.add(normalizeLabel(g.homeTeam));
+      if (g?.awayTeam) s.add(normalizeLabel(g.awayTeam));
     }
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
+    return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [games]);
 
+  // Search matches (for adding to pinned)
+  const searchMatches = useMemo(() => {
+    const q = teamSearch.trim().toLowerCase();
+    if (!q) return [];
+    // show up to 12 matches
+    return allTeams
+      .filter((t) => t.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [teamSearch, allTeams]);
+
   function toggleTeam(team) {
+    const t = normalizeLabel(team);
+    if (!t) return;
     setSelectedTeams((prev) => {
       const next = new Set(prev);
-      if (next.has(team)) next.delete(team);
-      else next.add(team);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
       return next;
     });
   }
@@ -130,39 +152,45 @@ export default function Page() {
   }
 
   function pinTeam(team) {
-    if (!team) return;
-    setPinnedTeams((prev) => new Set([...prev, team]));
+    const t = normalizeLabel(team);
+    if (!t) return;
+    setPinnedTeams((prev) => {
+      const next = new Set(prev);
+      next.add(t);
+      return next;
+    });
+    setTeamSearch("");
   }
 
   function unpinTeam(team) {
+    const t = normalizeLabel(team);
     setPinnedTeams((prev) => {
       const next = new Set(prev);
-      next.delete(team);
+      next.delete(t);
       return next;
     });
   }
 
-  const searchResults = useMemo(() => {
-    const q = teamSearch.trim().toLowerCase();
-    if (!q) return [];
-    return allTeams
-      .filter((t) => t.toLowerCase().includes(q))
-      .slice(0, 20);
-  }, [teamSearch, allTeams]);
+  // Filtered games
+  const filtered = useMemo(() => {
+    let list = Array.isArray(games) ? [...games] : [];
 
-  const filteredGames = useMemo(() => {
-    const sel = selectedTeams;
-
-    let list = games;
-
-    // EMPTY selection => show all games
-    if (sel.size > 0) {
-      list = list.filter((g) => (g.homeTeam && sel.has(g.homeTeam)) || (g.awayTeam && sel.has(g.awayTeam)));
+    // empty selection => show ALL games
+    if (selectedTeams.size > 0) {
+      list = list.filter((g) => {
+        const h = normalizeLabel(g?.homeTeam);
+        const a = normalizeLabel(g?.awayTeam);
+        return (h && selectedTeams.has(h)) || (a && selectedTeams.has(a));
+      });
     }
 
-    if (liveOnly) list = list.filter((g) => g.status === "LIVE");
+    if (liveOnly) list = list.filter((g) => g?.status === "LIVE");
 
-    list = [...list].sort((a, b) => new Date(a.startTime || 0).getTime() - new Date(b.startTime || 0).getTime());
+    list.sort((a, b) => {
+      const ta = new Date(a?.startTime || 0).getTime();
+      const tb = new Date(b?.startTime || 0).getTime();
+      return ta - tb;
+    });
 
     return list;
   }, [games, selectedTeams, liveOnly]);
@@ -178,7 +206,7 @@ export default function Page() {
           <button onClick={() => setView("month")} style={btnStyle(view === "month")}>Next 30</button>
           <button onClick={() => setView("season")} style={btnStyle(view === "season")}>Season</button>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid #ddd", borderRadius: 12 }}>
+          <label style={toggleStyle}>
             <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
             Live games only
           </label>
@@ -190,33 +218,146 @@ export default function Page() {
       </header>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 10 }}>
+        {/* Teams */}
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <strong>Teams</strong>
             <span style={{ fontSize: 12, color: "#555" }}>
               (toggles are saved automatically • empty selection = show all games)
             </span>
-            <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-              Updated: {lastUpdated || "—"}
-            </div>
 
-            <button onClick={selectAll} style={miniBtn}>Select all</button>
-            <button onClick={clearSelection} style={miniBtn}>Clear</button>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
+
+              <label style={toggleStyle}>
+                <input
+                  type="checkbox"
+                  checked={showAllTeams}
+                  onChange={(e) => setShowAllTeams(e.target.checked)}
+                />
+                All teams
+              </label>
+
+              <button onClick={selectAll} style={smallBtn}>Select all</button>
+              <button onClick={clearSelection} style={smallBtn}>Clear</button>
+            </div>
           </div>
 
-          {/* Pinned teams */}
+          {/* Pinned (always visible) */}
           <div style={{ marginTop: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <strong style={{ fontSize: 13 }}>Pinned</strong>
-              <span style={{ fontSize: 12, color: "#555" }}>(your shortlist)</span>
+            <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
+              <strong style={{ color: "#111" }}>Pinned</strong> (your shortlist)
             </div>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-              {Array.from(pinnedTeams).sort().map((t) => {
-                const on = selectedTeams.has(t);
-                return (
-                  <div key={t} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {Array.from(pinnedTeams).length === 0 ? (
+              <div style={{ fontSize: 12, color: "#555" }}>No pinned teams yet.</div>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {Array.from(pinnedTeams)
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((t) => {
+                    const on = selectedTeams.has(t);
+                    return (
+                      <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <button
+                          onClick={() => toggleTeam(t)}
+                          style={{
+                            padding: "8px 10px",
+                            borderRadius: 999,
+                            border: "1px solid #ddd",
+                            background: on ? "#111" : "#fff",
+                            color: on ? "#fff" : "#111",
+                            fontSize: 13,
+                            fontWeight: 700
+                          }}
+                          title="Toggle filter"
+                        >
+                          📌 {t}
+                        </button>
+                        <button
+                          onClick={() => unpinTeam(t)}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 999,
+                            border: "1px solid #ddd",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontWeight: 900
+                          }}
+                          title="Remove from pinned"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
+          {/* Search + Add to pinned */}
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                value={teamSearch}
+                onChange={(e) => setTeamSearch(e.target.value)}
+                placeholder="Search teams to pin (ex: Princeton, UC Davis, San Diego)..."
+                style={{
+                  flex: "1 1 320px",
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #ddd",
+                  fontSize: 13
+                }}
+              />
+              <div style={{ fontSize: 12, color: "#555" }}>Type a school name (mascots are handled).</div>
+            </div>
+
+            {teamSearch.trim() && (
+              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {searchMatches.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#555" }}>No matches.</div>
+                ) : (
+                  searchMatches.map((t) => (
                     <button
+                      key={t}
+                      onClick={() => pinTeam(t)}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 999,
+                        border: "1px solid #ddd",
+                        background: "#fff",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: "pointer"
+                      }}
+                      title="Add to pinned"
+                    >
+                      + {t}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* All teams list (big) - controlled by toggle */}
+          {showAllTeams ? (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <strong style={{ fontSize: 13 }}>All teams (from current results)</strong>
+                <span style={{ fontSize: 12, color: "#555" }}>
+                  {allTeams.length ? `${allTeams.length} found` : "No teams found yet (try Refresh)."}
+                </span>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                {allTeams.map((t) => {
+                  const on = selectedTeams.has(t);
+                  return (
+                    <button
+                      key={t}
                       onClick={() => toggleTeam(t)}
                       style={{
                         padding: "8px 10px",
@@ -228,99 +369,32 @@ export default function Page() {
                       }}
                       title="Toggle filter"
                     >
-                      📌 {t}
+                      {t}
                     </button>
-                    <button onClick={() => unpinTeam(t)} style={xBtn} title="Remove from pinned">
-                      ✕
-                    </button>
-                  </div>
-                );
-              })}
-
-              {pinnedTeams.size === 0 ? (
-                <div style={{ fontSize: 12, color: "#666" }}>No pinned teams yet.</div>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Team search + add */}
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                value={teamSearch}
-                onChange={(e) => setTeamSearch(e.target.value)}
-                placeholder="Search teams to pin… (ex: Princeton)"
-                style={searchInput}
-              />
-              <span style={{ fontSize: 12, color: "#666" }}>Type a school name (mascots are handled).</span>
-            </div>
-
-            {teamSearch.trim() && (
-              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {searchResults.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "#666" }}>No matches.</div>
-                ) : (
-                  searchResults.map((t) => (
-                    <button key={t} onClick={() => pinTeam(t)} style={chipBtn} title="Add to pinned">
-                      + {t}
-                    </button>
-                  ))
-                )}
+                  );
+                })}
               </div>
-            )}
-          </div>
-
-          {/* All teams (auto) */}
-          <div style={{ marginTop: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <strong style={{ fontSize: 13 }}>All teams (from current results)</strong>
-              <span style={{ fontSize: 12, color: "#555" }}>
-                {allTeams.length ? `${allTeams.length} found` : "No teams found yet (try Refresh)."}
-              </span>
             </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-              {allTeams.map((t) => {
-                const on = selectedTeams.has(t);
-                return (
-                  <button
-                    key={t}
-                    onClick={() => toggleTeam(t)}
-                    style={{
-                      padding: "8px 10px",
-                      borderRadius: 999,
-                      border: "1px solid #ddd",
-                      background: on ? "#111" : "#fff",
-                      color: on ? "#fff" : "#111",
-                      fontSize: 13
-                    }}
-                    title="Toggle filter"
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          ) : null}
         </section>
 
+        {/* Games */}
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <strong>Games</strong>
-            <span style={{ fontSize: 12, color: "#555" }}>{filteredGames.length} shown</span>
+            <span style={{ fontSize: 12, color: "#555" }}>{filtered.length} shown</span>
           </div>
 
           {error ? <div style={{ marginTop: 10, color: "crimson" }}>{error}</div> : null}
 
           <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-            {filteredGames.map((g) => (
+            {filtered.map((g) => (
               <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 700 }}>
-                    {g.awayRank ? `#${g.awayRank} ` : ""}
-                    {g.awayTeam} <span style={{ fontWeight: 400 }}>at</span>{" "}
-                    {g.homeRank ? `#${g.homeRank} ` : ""}
-                    {g.homeTeam}
+                  <div style={{ fontWeight: 800 }}>
+                    {g.awayRank ? `#${g.awayRank} ` : ""}{g.awayTeam}{" "}
+                    <span style={{ fontWeight: 400 }}>at</span>{" "}
+                    {g.homeRank ? `#${g.homeRank} ` : ""}{g.homeTeam}
                   </div>
 
                   <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
@@ -351,7 +425,7 @@ export default function Page() {
               </div>
             ))}
 
-            {!loading && filteredGames.length === 0 ? (
+            {!loading && filtered.length === 0 ? (
               <div style={{ color: "#555", marginTop: 8 }}>
                 No matching games found in this view/date range.
               </div>
@@ -375,7 +449,7 @@ function StatusPill({ status }) {
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 700 }}>
+    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 800 }}>
       {s.text}
     </span>
   );
@@ -388,52 +462,30 @@ function btnStyle(active) {
     border: "1px solid #ddd",
     background: active ? "#111" : "#fff",
     color: active ? "#fff" : "#111",
-    fontWeight: 700,
+    fontWeight: 800,
     cursor: "pointer"
   };
 }
 
-const miniBtn = {
-  padding: "6px 10px",
-  borderRadius: 12,
-  border: "1px solid #ddd",
-  background: "#fff",
-  color: "#111",
-  fontWeight: 700,
-  cursor: "pointer",
-  fontSize: 12
-};
-
-const xBtn = {
-  padding: "6px 8px",
-  borderRadius: 10,
-  border: "1px solid #ddd",
-  background: "#fff",
-  cursor: "pointer",
-  fontWeight: 900,
-  fontSize: 12,
-  lineHeight: "12px"
-};
-
-const chipBtn = {
+const toggleStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
   padding: "8px 10px",
-  borderRadius: 999,
   border: "1px solid #ddd",
-  background: "#fff",
-  color: "#111",
-  fontSize: 13,
-  fontWeight: 700,
-  cursor: "pointer"
+  borderRadius: 12,
+  fontSize: 12,
+  fontWeight: 800,
+  background: "#fff"
 };
 
-const searchInput = {
-  width: 320,
-  maxWidth: "100%",
-  padding: "10px 12px",
+const smallBtn = {
+  padding: "8px 10px",
   borderRadius: 12,
   border: "1px solid #ddd",
-  outline: "none",
-  fontSize: 13
+  background: "#fff",
+  fontWeight: 800,
+  cursor: "pointer"
 };
 
 const cardStyle = {
@@ -452,6 +504,6 @@ const linkBtn = {
   border: "1px solid #ddd",
   textDecoration: "none",
   color: "#111",
-  fontWeight: 700,
+  fontWeight: 800,
   fontSize: 13
 };
