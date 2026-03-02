@@ -31,11 +31,13 @@ const DISPLAY_NAME = {
   "Stanislaus State": "Stanislaus St"
 };
 
-function formatLocalTime(isoString) {
+function formatLocalDateTime(isoString) {
   if (!isoString) return "";
   try {
     const d = new Date(isoString);
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `${date} • ${time}`;
   } catch {
     return "";
   }
@@ -301,7 +303,7 @@ export default function Page() {
                     {DISPLAY_NAME[g.homeTeam] || g.homeTeam}
                   </div>
                   <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-                    {formatLocalTime(g.startTime)}
+                    {formatLocalDateTime(g.startTime)}
                   </div>
                 </div>
 
