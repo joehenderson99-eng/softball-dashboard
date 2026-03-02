@@ -74,7 +74,7 @@ function addDaysISO(days) {
 }
 
 export default function Page() {
-  const [view, setView] = useState("today"); // today | week
+  const [view, setView] = useState("today"); // today | week | month | season
   const [liveOnly, setLiveOnly] = useState(false);
   const [selectedTeams, setSelectedTeams] = useState(() => new Set(TEAMS));
   const [games, setGames] = useState([]);
@@ -113,9 +113,16 @@ export default function Page() {
   }, [view, liveOnly, selectedTeams]);
 
   const dateRange = useMemo(() => {
-    if (view === "today") return { from: startOfTodayISO(), to: addDaysISO(1) };
-    return { from: startOfTodayISO(), to: addDaysISO(7) };
-  }, [view]);
+  const from = startOfTodayISO();
+
+  if (view === "today") return { from, to: addDaysISO(1) };   // today only
+  if (view === "week") return { from, to: addDaysISO(7) };    // next 7 days
+  if (view === "month") return { from, to: addDaysISO(30) };  // next 30 days
+  if (view === "season") return { from, to: addDaysISO(180) };// ~6 months
+
+  // fallback
+  return { from, to: addDaysISO(7) };
+}, [view]);
 
   async function fetchGames() {
     setLoading(true);
@@ -184,6 +191,8 @@ export default function Page() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => setView("today")} style={btnStyle(view === "today")}>Today</button>
           <button onClick={() => setView("week")} style={btnStyle(view === "week")}>This Week</button>
+          <button onClick={() => setView("month")}>Next 30</button>
+          <button onClick={() => setView("season")}>Season</button>
 
           <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid #ddd", borderRadius: 12 }}>
             <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
