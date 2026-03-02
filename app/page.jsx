@@ -405,9 +405,8 @@ export default function Page() {
                 <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   <StatusPill status={g.status} />
                   <span style={{ fontSize: 14 }}>
-                    {g.status === "SCHEDULED" ? "Scheduled" : ""}
-                    {g.status === "LIVE" ? `LIVE • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}` : ""}
-                    {g.status === "FINAL" ? `Final • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}` : ""}
+                    {g.status === "LIVE" && `LIVE • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
+                    {g.status === "FINAL" && `Final • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
                   </span>
                 </div>
 
