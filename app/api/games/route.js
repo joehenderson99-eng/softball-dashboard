@@ -89,67 +89,128 @@ function yyyymmdd(d) {
 }
 
 function normalizeTeamName(name) {
-  if (!name) return name;
-  const n = String(name).trim();
+  if (!name) return "";
+  let n = String(name).trim();
 
-  const map = new Map([
-    ["Boise St", "Boise State"],
-    ["Boise State", "Boise State"],
+  // normalize dashes + whitespace
+  n = n.replace(/[–—]/g, "-").replace(/\s+/g, " ");
 
-    ["Iowa", "Iowa"],
-    ["UC Davis", "UC Davis"],
+  // If ESPN/NCAA includes mascots ("Princeton Tigers"), strip to school name.
+  // We do this by matching known schools first (best accuracy).
+  const SCHOOL_PREFIXES = [
+    "Boise State",
+    "Iowa",
+    "UC Davis",
+    "Cal Poly",
+    "California",
+    "Nevada",
+    "Columbia",
+    "Santa Clara",
+    "Weber State",
+    "Sacramento State",
+    "Oklahoma",
+    "Maine",
+    "Idaho State",
+    "Fresno State",
+    "South Carolina State",
+    "Princeton",
+    "Stanford",
+    "Nebraska-Kearney",
+    "Stanislaus State",
+    "Southern Oregon",
+    "San Jose State",
+    "San Diego",
+    "Oregon",
+    "Oregon State",
+    "UCLA",
+    "Washington",
+    "Virginia",
+    "Virginia Tech",
+    "Texas",
+    "Texas A&M",
+    "Ole Miss",
+    "Notre Dame",
+    "Ohio State",
+    "Penn State",
+    "North Carolina",
+    "Florida",
+    "Florida State",
+    "Tennessee",
+    "LSU",
+    "Louisiana",
+    "New Mexico",
+    "New Mexico State",
+    "North Texas",
+    "Grand Canyon",
+    "Pacific",
+    "Niagara",
+    "Nicholls",
+    "Oakland",
+    "Seattle U",
+    "UCF",
+    "UNC Wilmington",
+    "UT Arlington",
+    "UTEP",
+    "UTSA",
+    "Wichita State",
+    "Wisconsin",
+    "North Dakota State",
+    "Northern Illinois",
+    "Northern Kentucky",
+    "North Florida",
+    "Queens University",
+    "Radford",
+    "Rutgers",
+    "Sam Houston",
+    "Samford",
+    "Saint Mary's",
+    "Saint Francis",
+    "St. Bonaventure",
+    "St. Thomas-Minnesota",
+    "Stephen F. Austin",
+    "Stetson",
+    "Syracuse",
+    "Tarleton State",
+    "Troy",
+    "Tulsa",
+    "UAB",
+    "UAlbany",
+    "UL Monroe",
+    "UMBC",
+    "UNLV",
+    "Utah",
+    "Utah State",
+    "Utah Tech",
+    "Utah Valley",
+    "Washington",
+    "Weber State",
+    "Western Kentucky",
+    "Winthrop"
+  ];
 
-    ["Cal Poly", "Cal Poly"],
+  for (const school of SCHOOL_PREFIXES) {
+    if (n === school) return school;
+    if (n.startsWith(school + " ")) return school; // "Princeton Tigers" -> "Princeton"
+  }
 
+  // Handle some common short/alt names from feeds
+  const ALIASES = new Map([
     ["Cal", "California"],
-    ["California", "California"],
-
-    ["Nevada", "Nevada"],
-
-    ["Columbia", "Columbia"],
-
-    ["Santa Clara", "Santa Clara"],
-
-    ["Weber St", "Weber State"],
-    ["Weber State", "Weber State"],
-
     ["Sac State", "Sacramento State"],
     ["Sacramento St", "Sacramento State"],
-    ["Sacramento State", "Sacramento State"],
-
-    ["Oklahoma", "Oklahoma"],
-    ["Oklahoma Sooners", "Oklahoma"],
-
-    ["Maine", "Maine"],
-
+    ["Boise St", "Boise State"],
     ["Idaho St", "Idaho State"],
-    ["Idaho State", "Idaho State"],
-
-    ["Fresno", "Fresno State"],
     ["Fresno St", "Fresno State"],
-    ["Fresno State", "Fresno State"],
-
     ["SC State", "South Carolina State"],
-    ["South Carolina State", "South Carolina State"],
-
-    ["Princeton", "Princeton"],
-
-    ["Stanford Cardinal", "Stanford"],
-    ["Stanford", "Stanford"],
-
     ["Nebraska Kearney", "Nebraska-Kearney"],
     ["Nebraska–Kearney", "Nebraska-Kearney"],
-    ["Nebraska-Kearney", "Nebraska-Kearney"],
-
-    ["Stanislaus St", "Stanislaus State"],
     ["CSU Stanislaus", "Stanislaus State"],
-    ["Stanislaus State", "Stanislaus State"],
-
-    ["Southern Oregon", "Southern Oregon"]
+    ["Stanislaus St", "Stanislaus State"]
   ]);
 
-  if (map.has(n)) return map.get(n);
-  return n.replace(/\s+/g, " ");
+  if (ALIASES.has(n)) return ALIASES.get(n);
+
+  return n;
 }
 
 function extractEspnGames(payload) {
