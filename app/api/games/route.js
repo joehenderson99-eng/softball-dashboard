@@ -225,15 +225,62 @@ function normalizeTeamName(name) {
   const n = String(name).trim();
 
   const map = new Map([
-    ["Cal", "California"],
-    ["California", "California"],
-    ["Sacramento St", "Sacramento State"],
-    ["Sacramento State", "Sacramento State"],
-    ["Stanford Cardinal", "Stanford"],
-    ["Stanford", "Stanford"],
-    ["Nebraska Kearney", "Nebraska–Kearney"],
-    ["Nebraska–Kearney", "Nebraska–Kearney"]
-  ]);
+  // Short names used in your UI -> Canonical names
+  ["Boise St", "Boise State"],
+  ["Boise State", "Boise State"],
+
+  ["Iowa", "Iowa"],
+  ["UC Davis", "UC Davis"],
+
+  ["Cal Poly", "Cal Poly"],
+
+  ["Cal", "California"],
+  ["California", "California"],
+
+  ["Nevada", "Nevada"],
+
+  ["Columbia", "Columbia"],
+
+  ["Santa Clara", "Santa Clara"],
+
+  ["Weber St", "Weber State"],
+  ["Weber State", "Weber State"],
+
+  ["Sac State", "Sacramento State"],
+  ["Sacramento St", "Sacramento State"],
+  ["Sacramento State", "Sacramento State"],
+
+  ["Oklahoma", "Oklahoma"],
+  ["Oklahoma University", "Oklahoma"],
+  ["Oklahoma Sooners", "Oklahoma"],
+
+  ["Maine", "Maine"],
+
+  ["Idaho St", "Idaho State"],
+  ["Idaho State", "Idaho State"],
+
+  ["Fresno", "Fresno State"],
+  ["Fresno St", "Fresno State"],
+  ["Fresno State", "Fresno State"],
+
+  ["SC State", "South Carolina State"],
+  ["South Carolina State", "South Carolina State"],
+
+  ["Princeton", "Princeton"],
+
+  ["Stanford Cardinal", "Stanford"],
+  ["Stanford", "Stanford"],
+
+  ["Nebraska Kearney", "Nebraska-Kearney"],
+  ["Nebraska–Kearney", "Nebraska-Kearney"],
+  ["Nebraska-Kearney", "Nebraska-Kearney"],
+
+  ["Stanislaus St", "Stanislaus State"],
+  ["CSU Stanislaus", "Stanislaus State"],
+  ["Stanislaus State", "Stanislaus State"],
+
+  ["Southern Oregon", "Southern Oregon"],
+]);
 
   if (map.has(n)) return map.get(n);
   return n.replace(/\s+/g, " ");
