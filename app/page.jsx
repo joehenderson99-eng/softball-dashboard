@@ -2,54 +2,34 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const TEAMS = [
-  "Boise State",
-  "Iowa",
-  "UC Davis",
-  "Cal Poly",
-  "California",
-  "Nevada",
-  "Columbia",
-  "Santa Clara",
-  "Weber State",
-  "Sacramento State",
-  "Oklahoma",
-  "Maine",
-  "Idaho State",
-  "Fresno State",
-  "South Carolina State",
-  "Princeton",
-  "Stanford",
-  "Nebraska–Kearney",
-  "CSU Stanislaus",
-  "Southern Oregon"
-];
+const STORAGE_KEY = "softball_dashboard_v2_settings";
 
-// Display names (short scoreboard-style)
+/**
+ * Normalize team names coming back from APIs so filters/pills match consistently.
+ * Keep this lightweight—just handles common punctuation/dashes/extra spaces.
+ */
+function normalizeTeamName(name) {
+  if (!name) return "";
+  return String(name)
+    .trim()
+    .replace(/[–—]/g, "-") // normalize en/em dashes to hyphen
+    .replace(/\s+/g, " "); // collapse whitespace
+}
+
+// Optional: pretty short names for the UI pills + matchup display.
+// Anything not listed will fall back to the normalized name.
 const DISPLAY_NAME = {
   "Boise State": "Boise St",
-  "Iowa": "Iowa",
   "UC Davis": "UC Davis",
-  "Cal Poly": "Cal Poly",
-  "California": "Cal",
-  "Nevada": "Nevada",
-  "Columbia": "Columbia",
-  "Santa Clara": "Santa Clara",
+  California: "Cal",
   "Weber State": "Weber St",
   "Sacramento State": "Sac State",
-  "Oklahoma": "Oklahoma",
-  "Maine": "Maine",
   "Idaho State": "Idaho St",
   "Fresno State": "Fresno St",
   "South Carolina State": "SC State",
-  "Princeton": "Princeton",
-  "Stanford": "Stanford",
-  "Nebraska–Kearney": "Nebraska-Kearney",
-  "CSU Stanislaus": "Stanislaus St",
-  "Southern Oregon": "Southern Oregon"
+  "Nebraska-Kearney": "Nebraska-Kearney",
+  "Stanislaus State": "Stanislaus St"
 };
-
-const STORAGE_KEY = "softball_dashboard_v1_settings";
 
 function formatLocalTime(isoString) {
   if (!isoString) return "";
@@ -61,26 +41,31 @@ function formatLocalTime(isoString) {
   }
 }
 
-function startOfTodayISO() {
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return d.toISOString();
-}
-
-function addDaysISO(days) {
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
-  return d.toISOString();
-}
-
 export default function Page() {
-  const [view, setView] = useState("today"); // today | week | month | season
+  // IMPORTANT:
+  // Your API route now expects `range` (today | week | 30 | season).
+  const [view, setView] = useState("today"); // today | week | 30 | season
   const [liveOnly, setLiveOnly] = useState(false);
-  const [selectedTeams, setSelectedTeams] = useState(() => new Set(TEAMS));
+
+  // games from API (we will normalize team names before storing here)
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState("");
+
+  // Dynamic team list built from fetched games
+  const allTeams = useMemo(() => {
+    const s = new Set();
+    for (const g of games) {
+      if (g?.homeTeam) s.add(g.homeTeam);
+      if (g?.awayTeam) s.add(g.awayTeam);
+    }
+    // Sort for stable UI
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [games]);
+
+  // Selected teams (dynamic)
+  const [selectedTeams, setSelectedTeams] = useState(() => new Set());
 
   // Load saved settings
   useEffect(() => {
@@ -112,35 +97,30 @@ export default function Page() {
     }
   }, [view, liveOnly, selectedTeams]);
 
-  const dateRange = useMemo(() => {
-  const from = startOfTodayISO();
-
-  if (view === "today") return { from, to: addDaysISO(1) };   // today only
-  if (view === "week") return { from, to: addDaysISO(7) };    // next 7 days
-  if (view === "month") return { from, to: addDaysISO(30) };  // next 30 days
-  if (view === "season") return { from, to: addDaysISO(180) };// ~6 months
-
-  // fallback
-  return { from, to: addDaysISO(7) };
-}, [view]);
-
+  // Fetch games from API using `range`
   async function fetchGames() {
     setLoading(true);
     setError("");
     try {
-      const qs = new URLSearchParams({
-        from: dateRange.from,
-        to: dateRange.to
-      }).toString();
-
+      const qs = new URLSearchParams({ range: view }).toString();
       const res = await fetch(`/api/games?${qs}`);
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data = await res.json();
 
-      setGames(Array.isArray(data?.games) ? data.games : []);
+      const rawGames = Array.isArray(data?.games) ? data.games : [];
+
+      // Normalize team names for consistency throughout UI
+      const normalized = rawGames.map((g) => ({
+        ...g,
+        homeTeam: normalizeTeamName(g.homeTeam),
+        awayTeam: normalizeTeamName(g.awayTeam)
+      }));
+
+      setGames(normalized);
       setLastUpdated(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     } catch (e) {
       setError(e?.message || "Failed to load games.");
+      setGames([]);
     } finally {
       setLoading(false);
     }
@@ -152,7 +132,19 @@ export default function Page() {
     const interval = setInterval(fetchGames, 30_000); // 30s refresh
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange.from, dateRange.to]);
+  }, [view]);
+
+  // Keep selectedTeams in sync when the available team list changes:
+  // - If user has NOTHING selected (empty set), that means "Show all" (by your request).
+  // - Otherwise, keep their selection but drop teams that no longer exist in the current range.
+  useEffect(() => {
+    setSelectedTeams((prev) => {
+      if (!prev || prev.size === 0) return prev; // empty means "show all", preserve
+      const next = new Set();
+      for (const t of prev) if (allTeams.includes(t)) next.add(t);
+      return next;
+    });
+  }, [allTeams]);
 
   function toggleTeam(team) {
     setSelectedTeams((prev) => {
@@ -163,12 +155,26 @@ export default function Page() {
     });
   }
 
+  function clearTeams() {
+    // Empty set = show ALL games (per your requirement)
+    setSelectedTeams(new Set());
+  }
+
+  function selectAllTeams() {
+    setSelectedTeams(new Set(allTeams));
+  }
+
+  // Filter games:
+  // - If selectedTeams is empty => show all games
+  // - Else show only games involving selected teams
   const filtered = useMemo(() => {
     const sel = selectedTeams;
+
     let list = games.filter((g) => {
+      if (!sel || sel.size === 0) return true; // SHOW ALL when nothing selected
+
       const hit =
-        (g.homeTeam && sel.has(g.homeTeam)) ||
-        (g.awayTeam && sel.has(g.awayTeam));
+        (g.homeTeam && sel.has(g.homeTeam)) || (g.awayTeam && sel.has(g.awayTeam));
       return hit;
     });
 
@@ -189,13 +195,34 @@ export default function Page() {
         <h1 style={{ margin: "6px 0", fontSize: 20 }}>🥎 Softball Dashboard (Private)</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>Today</button>
-          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>This Week</button>
-          <button onClick={() => setView("month")}>Next 30</button>
-          <button onClick={() => setView("season")}>Season</button>
+          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>
+            Today
+          </button>
+          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>
+            This Week
+          </button>
+          <button onClick={() => setView("30")} style={btnStyle(view === "30")}>
+            Next 30
+          </button>
+          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>
+            Season
+          </button>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid #ddd", borderRadius: 12 }}>
-            <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              border: "1px solid #ddd",
+              borderRadius: 12
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={liveOnly}
+              onChange={(e) => setLiveOnly(e.target.checked)}
+            />
             Live games only
           </label>
 
@@ -209,32 +236,48 @@ export default function Page() {
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <strong>Teams</strong>
-            <span style={{ fontSize: 12, color: "#555" }}>(toggles are saved automatically)</span>
-            <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-              Updated: {lastUpdated || "—"}
+            <span style={{ fontSize: 12, color: "#555" }}>
+              (toggles are saved automatically • empty selection = show all games)
+            </span>
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
+              <button onClick={selectAllTeams} style={miniBtn}>
+                Select all
+              </button>
+              <button onClick={clearTeams} style={miniBtn}>
+                Clear
+              </button>
             </div>
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-            {TEAMS.map((t) => {
-              const on = selectedTeams.has(t);
-              return (
-                <button
-                  key={t}
-                  onClick={() => toggleTeam(t)}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    background: on ? "#111" : "#fff",
-                    color: on ? "#fff" : "#111",
-                    fontSize: 13
-                  }}
-                >
-                  {DISPLAY_NAME[t] || t}
-                </button>
-              );
-            })}
+            {allTeams.length === 0 ? (
+              <div style={{ fontSize: 13, color: "#555" }}>
+                No teams found yet (try Refresh).
+              </div>
+            ) : (
+              allTeams.map((t) => {
+                const on = selectedTeams.size === 0 ? false : selectedTeams.has(t);
+                return (
+                  <button
+                    key={t}
+                    onClick={() => toggleTeam(t)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 999,
+                      border: "1px solid #ddd",
+                      background: on ? "#111" : "#fff",
+                      color: on ? "#fff" : "#111",
+                      fontSize: 13
+                    }}
+                    title={t}
+                  >
+                    {DISPLAY_NAME[t] || t}
+                  </button>
+                );
+              })
+            )}
           </div>
         </section>
 
@@ -251,16 +294,26 @@ export default function Page() {
               <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 700 }}>
-                    {g.awayRank ? `#${g.awayRank} ` : ""}{DISPLAY_NAME[g.awayTeam] || g.awayTeam}{" "}
+                    {g.awayRank ? `#${g.awayRank} ` : ""}
+                    {DISPLAY_NAME[g.awayTeam] || g.awayTeam}{" "}
                     <span style={{ fontWeight: 400 }}>at</span>{" "}
-                    {g.homeRank ? `#${g.homeRank} ` : ""}{DISPLAY_NAME[g.homeTeam] || g.homeTeam}
+                    {g.homeRank ? `#${g.homeRank} ` : ""}
+                    {DISPLAY_NAME[g.homeTeam] || g.homeTeam}
                   </div>
                   <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
                     {formatLocalTime(g.startTime)}
                   </div>
                 </div>
 
-                <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    alignItems: "center"
+                  }}
+                >
                   <StatusPill status={g.status} />
                   <span style={{ fontSize: 14 }}>
                     {g.status === "SCHEDULED" ? "Scheduled" : ""}
@@ -271,13 +324,19 @@ export default function Page() {
 
                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {g.watchUrl ? (
-                    <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>📺 Watch</a>
+                    <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                      📺 Watch
+                    </a>
                   ) : null}
                   {g.gameUrl ? (
-                    <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>📋 Game info</a>
+                    <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                      📋 Game info
+                    </a>
                   ) : null}
                   {g.boxUrl ? (
-                    <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>📊 Box score</a>
+                    <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                      📊 Box score
+                    </a>
                   ) : null}
                 </div>
               </div>
@@ -307,7 +366,16 @@ function StatusPill({ status }) {
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 700 }}>
+    <span
+      style={{
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: s.bg,
+        color: s.fg,
+        fontSize: 12,
+        fontWeight: 700
+      }}
+    >
       {s.text}
     </span>
   );
@@ -324,6 +392,17 @@ function btnStyle(active) {
     cursor: "pointer"
   };
 }
+
+const miniBtn = {
+  padding: "6px 10px",
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  background: "#fff",
+  color: "#111",
+  fontWeight: 700,
+  cursor: "pointer",
+  fontSize: 12
+};
 
 const cardStyle = {
   border: "1px solid #ddd",
