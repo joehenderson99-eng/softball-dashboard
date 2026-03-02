@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "softball_dashboard_v2_settings";
+const PINNED_MIGRATION_KEY = "softball_dashboard_pins_migrated_v3";
 
 function formatLocalTime(isoString) {
   if (!isoString) return "";
@@ -24,13 +25,27 @@ function formatLocalDateHeader(isoString) {
   }
 }
 
+// ✅ Date + Time in ONE string (date on LEFT of time)
+function formatLocalDateTime(isoString) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `${date} • ${time}`;
+  } catch {
+    return "";
+  }
+}
+
+// local day key for grouping
 function dateKeyLocal(isoString) {
   if (!isoString) return "unknown";
   const d = new Date(isoString);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`; // local day key
+  return `${y}-${m}-${day}`;
 }
 
 function normalizeLabel(name) {
@@ -40,27 +55,13 @@ function normalizeLabel(name) {
 
 function rankBadgeStyle(rank) {
   if (!rank) return null;
-
-  // Subtle highlight (no crazy colors)
   if (rank <= 10) {
-    return {
-      border: "1px solid #d4b106",
-      background: "#fff7d6",
-      color: "#5c4a00",
-    };
+    return { border: "1px solid #d4b106", background: "#fff7d6", color: "#5c4a00" };
   }
   if (rank <= 25) {
-    return {
-      border: "1px solid #2f54eb",
-      background: "#e6f0ff",
-      color: "#10239e",
-    };
+    return { border: "1px solid #2f54eb", background: "#e6f0ff", color: "#10239e" };
   }
-  return {
-    border: "1px solid #bbb",
-    background: "#f3f3f3",
-    color: "#222",
-  };
+  return { border: "1px solid #bbb", background: "#f3f3f3", color: "#222" };
 }
 
 function RankPill({ rank }) {
@@ -74,7 +75,7 @@ function RankPill({ rank }) {
         borderRadius: 999,
         fontSize: 12,
         fontWeight: 900,
-        lineHeight: "16px",
+        lineHeight: "16px"
       }}
     >
       #{rank}
@@ -88,31 +89,32 @@ export default function Page() {
 
   // empty set => show ALL games
   const [selectedTeams, setSelectedTeams] = useState(() => new Set());
- const DEFAULT_PINNED = [
-  "Abilene Chrstn",
-  "Boise State",
-  "California",
-  "Columbia",
-  "Fresno State",
-  "Idaho State",
-  "Iowa",
-  "Maine",
-  "Memphis",
-  "Nevada",
-  "North Carolina",
-  "Oklahoma",
-  "Pacific",
-  "Princeton",
-  "Sacramento State",
-  "San Diego",
-  "San Diego St",
-  "Santa Clara",
-  "Stanford",
-  "UC Davis",
-  "Weber St"
-];
 
-const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
+  const DEFAULT_PINNED = [
+    "Abilene Chrstn",
+    "Boise State",
+    "California",
+    "Columbia",
+    "Fresno State",
+    "Idaho State",
+    "Iowa",
+    "Maine",
+    "Memphis",
+    "Nevada",
+    "North Carolina",
+    "Oklahoma",
+    "Pacific",
+    "Princeton",
+    "Sacramento State",
+    "San Diego",
+    "San Diego St",
+    "Santa Clara",
+    "Stanford",
+    "UC Davis",
+    "Weber St"
+  ];
+
+  const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
   const [showAllTeams, setShowAllTeams] = useState(false);
 
   const [games, setGames] = useState([]);
@@ -122,27 +124,21 @@ const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
 
   const [teamSearch, setTeamSearch] = useState("");
 
+  // One-time migration to force pinned list
+  useEffect(() => {
+    try {
+      const migrated = localStorage.getItem(PINNED_MIGRATION_KEY);
+      if (migrated) return;
+
+      setPinnedTeams(new Set(DEFAULT_PINNED));
+      localStorage.setItem(PINNED_MIGRATION_KEY, "1");
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load saved settings
-  const PINNED_MIGRATION_KEY = "softball_dashboard_pins_migrated_v3";
-
-useEffect(() => {
-  try {
-    const migrated = localStorage.getItem(PINNED_MIGRATION_KEY);
-    if (migrated) return;
-
-    // Force-update pinned list one time
-    setPinnedTeams(new Set(DEFAULT_PINNED));
-
-    // Optional: also turn on those pinned teams in your selected filter
-    // Comment out if you don't want that behavior:
-    // setSelectedTeams(new Set(DEFAULT_PINNED));
-
-    localStorage.setItem(PINNED_MIGRATION_KEY, "1");
-  } catch {
-    // ignore
-  }
-}, []);
-  
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -155,7 +151,9 @@ useEffect(() => {
 
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
       if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, []);
 
   // Save settings
@@ -168,19 +166,19 @@ useEffect(() => {
           liveOnly,
           showAllTeams,
           selectedTeams: Array.from(selectedTeams),
-          pinnedTeams: Array.from(pinnedTeams),
+          pinnedTeams: Array.from(pinnedTeams)
         })
       );
-    } catch {}
+    } catch {
+      // ignore
+    }
   }, [view, liveOnly, showAllTeams, selectedTeams, pinnedTeams]);
 
   async function fetchGames() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data = await res.json();
 
@@ -194,12 +192,15 @@ useEffect(() => {
     }
   }
 
+  // Initial load + refresh loop
   useEffect(() => {
     fetchGames();
     const interval = setInterval(fetchGames, 30_000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
+  // Build team list automatically from current games
   const allTeams = useMemo(() => {
     const s = new Set();
     for (const g of games) {
@@ -209,6 +210,7 @@ useEffect(() => {
     return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [games]);
 
+  // Search matches for pinning
   const searchMatches = useMemo(() => {
     const q = teamSearch.trim().toLowerCase();
     if (!q) return [];
@@ -231,7 +233,7 @@ useEffect(() => {
   }
 
   function clearSelection() {
-    setSelectedTeams(new Set());
+    setSelectedTeams(new Set()); // empty => show all games
   }
 
   function pinTeam(team) {
@@ -250,6 +252,7 @@ useEffect(() => {
     });
   }
 
+  // Filter games
   const filtered = useMemo(() => {
     let list = Array.isArray(games) ? [...games] : [];
 
@@ -263,11 +266,14 @@ useEffect(() => {
 
     if (liveOnly) list = list.filter((g) => g?.status === "LIVE");
 
-    list.sort((a, b) => new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime());
+    list.sort(
+      (a, b) =>
+        new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime()
+    );
     return list;
   }, [games, selectedTeams, liveOnly]);
 
-  // GROUP BY DAY (date headers)
+  // Group by day (date headers)
   const groupedByDay = useMemo(() => {
     const map = new Map();
     for (const g of filtered) {
@@ -276,7 +282,14 @@ useEffect(() => {
       map.get(key).push(g);
     }
     const keys = Array.from(map.keys()).sort((a, b) => (a < b ? -1 : 1));
-    return keys.map((k) => ({ key: k, header: formatLocalDateHeader(map.get(k)?.[0]?.startTime), games: map.get(k) }));
+    return keys.map((k) => {
+      const first = map.get(k)?.[0];
+      return {
+        key: k,
+        header: formatLocalDateHeader(first?.startTime),
+        games: map.get(k)
+      };
+    });
   }, [filtered]);
 
   return (
@@ -285,13 +298,25 @@ useEffect(() => {
         <h1 style={{ margin: "6px 0", fontSize: 20 }}>🥎 Softball Dashboard (Private)</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>Today</button>
-          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>This Week</button>
-          <button onClick={() => setView("month")} style={btnStyle(view === "month")}>Next 30</button>
-          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>Season</button>
+          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>
+            Today
+          </button>
+          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>
+            This Week
+          </button>
+          <button onClick={() => setView("month")} style={btnStyle(view === "month")}>
+            Next 30
+          </button>
+          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>
+            Season
+          </button>
 
           <label style={toggleStyle}>
-            <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={liveOnly}
+              onChange={(e) => setLiveOnly(e.target.checked)}
+            />
             Live games only
           </label>
 
@@ -310,16 +335,32 @@ useEffect(() => {
               (toggles are saved automatically • empty selection = show all games)
             </span>
 
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <div
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap"
+              }}
+            >
               <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
 
               <label style={toggleStyle}>
-                <input type="checkbox" checked={showAllTeams} onChange={(e) => setShowAllTeams(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={showAllTeams}
+                  onChange={(e) => setShowAllTeams(e.target.checked)}
+                />
                 All teams
               </label>
 
-              <button onClick={selectAll} style={smallBtn}>Select all</button>
-              <button onClick={clearSelection} style={smallBtn}>Clear</button>
+              <button onClick={selectAll} style={smallBtn}>
+                Select all
+              </button>
+              <button onClick={clearSelection} style={smallBtn}>
+                Clear
+              </button>
             </div>
           </div>
 
@@ -333,43 +374,45 @@ useEffect(() => {
               <div style={{ fontSize: 12, color: "#555" }}>No pinned teams yet.</div>
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {Array.from(pinnedTeams).sort((a, b) => a.localeCompare(b)).map((t) => {
-                  const on = selectedTeams.has(t);
-                  return (
-                    <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <button
-                        onClick={() => toggleTeam(t)}
-                        style={{
-                          padding: "8px 10px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          background: on ? "#111" : "#fff",
-                          color: on ? "#fff" : "#111",
-                          fontSize: 13,
-                          fontWeight: 800,
-                        }}
-                        title="Toggle filter"
-                      >
-                        📌 {t}
-                      </button>
-                      <button
-                        onClick={() => unpinTeam(t)}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          background: "#fff",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                        title="Remove from pinned"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  );
-                })}
+                {Array.from(pinnedTeams)
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((t) => {
+                    const on = selectedTeams.has(t);
+                    return (
+                      <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                        <button
+                          onClick={() => toggleTeam(t)}
+                          style={{
+                            padding: "8px 10px",
+                            borderRadius: 999,
+                            border: "1px solid #ddd",
+                            background: on ? "#111" : "#fff",
+                            color: on ? "#fff" : "#111",
+                            fontSize: 13,
+                            fontWeight: 800
+                          }}
+                          title="Toggle filter"
+                        >
+                          📌 {t}
+                        </button>
+                        <button
+                          onClick={() => unpinTeam(t)}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 999,
+                            border: "1px solid #ddd",
+                            background: "#fff",
+                            cursor: "pointer",
+                            fontWeight: 900
+                          }}
+                          title="Remove from pinned"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -386,12 +429,10 @@ useEffect(() => {
                   padding: "10px 12px",
                   borderRadius: 12,
                   border: "1px solid #ddd",
-                  fontSize: 13,
+                  fontSize: 13
                 }}
               />
-              <div style={{ fontSize: 12, color: "#555" }}>
-                Type a school name (mascots are handled).
-              </div>
+              <div style={{ fontSize: 12, color: "#555" }}>Type a school name (mascots are handled).</div>
             </div>
 
             {teamSearch.trim() && (
@@ -410,7 +451,7 @@ useEffect(() => {
                         background: "#fff",
                         fontSize: 13,
                         fontWeight: 800,
-                        cursor: "pointer",
+                        cursor: "pointer"
                       }}
                       title="Add to pinned"
                     >
@@ -445,7 +486,7 @@ useEffect(() => {
                         border: "1px solid #ddd",
                         background: on ? "#111" : "#fff",
                         color: on ? "#fff" : "#111",
-                        fontSize: 13,
+                        fontSize: 13
                       }}
                       title="Toggle filter"
                     >
@@ -470,19 +511,10 @@ useEffect(() => {
           <div style={{ marginTop: 10, display: "grid", gap: 14 }}>
             {groupedByDay.map((day) => (
               <div key={day.key}>
-                {/* DATE HEADER */}
-                <div
-                  style={{
-                    position: "sticky",
-                    top: 0,
-                    zIndex: 1,
-                    background: "#fff",
-                    padding: "10px 0 6px",
-                    borderBottom: "1px solid #eee",
-                    fontWeight: 900,
-                  }}
-                >
-                  {day.header || day.key}
+                {/* ✅ Better “day change” header */}
+                <div style={dayHeaderStyle}>
+                  <span style={dayHeaderAccent} />
+                  <span>{day.header || day.key}</span>
                 </div>
 
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
@@ -515,8 +547,9 @@ useEffect(() => {
                           </span>
                         </div>
 
+                        {/* ✅ Date is LEFT of time */}
                         <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-                          {formatLocalTime(g.startTime)}
+                          {formatLocalDateTime(g.startTime)}
                         </div>
                       </div>
 
@@ -525,7 +558,6 @@ useEffect(() => {
                         <span style={{ fontSize: 14 }}>
                           {g.status === "LIVE" && `LIVE • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
                           {g.status === "FINAL" && `Final • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
-                          {g.status === "SCHEDULED" ? "" : ""}
                         </span>
                       </div>
 
@@ -553,9 +585,7 @@ useEffect(() => {
             ))}
 
             {!loading && filtered.length === 0 ? (
-              <div style={{ color: "#555", marginTop: 8 }}>
-                No matching games found in this view/date range.
-              </div>
+              <div style={{ color: "#555", marginTop: 8 }}>No matching games found in this view/date range.</div>
             ) : null}
           </div>
         </section>
@@ -572,11 +602,20 @@ function StatusPill({ status }) {
   const map = {
     SCHEDULED: { text: "Scheduled", bg: "#f3f3f3", fg: "#222" },
     LIVE: { text: "LIVE", bg: "#111", fg: "#fff" },
-    FINAL: { text: "Final", bg: "#f3f3f3", fg: "#222" },
+    FINAL: { text: "Final", bg: "#f3f3f3", fg: "#222" }
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 900 }}>
+    <span
+      style={{
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: s.bg,
+        color: s.fg,
+        fontSize: 12,
+        fontWeight: 900
+      }}
+    >
       {s.text}
     </span>
   );
@@ -590,7 +629,7 @@ function btnStyle(active) {
     background: active ? "#111" : "#fff",
     color: active ? "#fff" : "#111",
     fontWeight: 900,
-    cursor: "pointer",
+    cursor: "pointer"
   };
 }
 
@@ -603,7 +642,7 @@ const toggleStyle = {
   borderRadius: 12,
   fontSize: 12,
   fontWeight: 900,
-  background: "#fff",
+  background: "#fff"
 };
 
 const smallBtn = {
@@ -612,14 +651,14 @@ const smallBtn = {
   border: "1px solid #ddd",
   background: "#fff",
   fontWeight: 900,
-  cursor: "pointer",
+  cursor: "pointer"
 };
 
 const cardStyle = {
   border: "1px solid #ddd",
   borderRadius: 18,
   padding: 12,
-  boxShadow: "0 1px 8px rgba(0,0,0,0.04)",
+  boxShadow: "0 1px 8px rgba(0,0,0,0.04)"
 };
 
 const linkBtn = {
@@ -632,5 +671,30 @@ const linkBtn = {
   textDecoration: "none",
   color: "#111",
   fontWeight: 900,
-  fontSize: 13,
+  fontSize: 13
+};
+
+// ✅ Styles for “day changes” (Tue/Wed/Thu…)
+const dayHeaderStyle = {
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  background: "#fff",
+  padding: "10px 10px",
+  border: "1px solid #eee",
+  borderRadius: 14,
+  fontWeight: 950,
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  boxShadow: "0 1px 8px rgba(0,0,0,0.04)"
+};
+
+const dayHeaderAccent = {
+  width: 10,
+  height: 10,
+  borderRadius: 999,
+  background: "#111",
+  display: "inline-block",
+  flex: "0 0 auto"
 };
