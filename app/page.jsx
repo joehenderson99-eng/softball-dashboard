@@ -25,7 +25,7 @@ function formatLocalDateHeader(isoString) {
   }
 }
 
-// ✅ Date + Time in ONE string (date on LEFT of time)
+// Date + Time in ONE string (date on LEFT of time)
 function formatLocalDateTime(isoString) {
   if (!isoString) return "";
   try {
@@ -55,12 +55,8 @@ function normalizeLabel(name) {
 
 function rankBadgeStyle(rank) {
   if (!rank) return null;
-  if (rank <= 10) {
-    return { border: "1px solid #d4b106", background: "#fff7d6", color: "#5c4a00" };
-  }
-  if (rank <= 25) {
-    return { border: "1px solid #2f54eb", background: "#e6f0ff", color: "#10239e" };
-  }
+  if (rank <= 10) return { border: "1px solid #d4b106", background: "#fff7d6", color: "#5c4a00" };
+  if (rank <= 25) return { border: "1px solid #2f54eb", background: "#e6f0ff", color: "#10239e" };
   return { border: "1px solid #bbb", background: "#f3f3f3", color: "#222" };
 }
 
@@ -117,6 +113,12 @@ export default function Page() {
   const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
   const [showAllTeams, setShowAllTeams] = useState(false);
 
+  // ✅ NEW: auto select pinned on startup (saved)
+  const [autoSelectPinned, setAutoSelectPinned] = useState(true);
+
+  // ✅ NEW: hide/show pinned section (saved)
+  const [showPinned, setShowPinned] = useState(true);
+
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -149,12 +151,26 @@ export default function Page() {
       if (typeof parsed?.liveOnly === "boolean") setLiveOnly(parsed.liveOnly);
       if (typeof parsed?.showAllTeams === "boolean") setShowAllTeams(parsed.showAllTeams);
 
+      // ✅ NEW
+      if (typeof parsed?.autoSelectPinned === "boolean") setAutoSelectPinned(parsed.autoSelectPinned);
+      if (typeof parsed?.showPinned === "boolean") setShowPinned(parsed.showPinned);
+
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
       if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
     } catch {
       // ignore
     }
   }, []);
+
+  // ✅ NEW: if enabled, auto-select pinned when there is no current selection
+  useEffect(() => {
+    if (!autoSelectPinned) return;
+
+    setSelectedTeams((prev) => {
+      if (prev && prev.size > 0) return prev; // user already has a filter selection
+      return new Set(Array.from(pinnedTeams)); // start with pinned ON
+    });
+  }, [autoSelectPinned, pinnedTeams]);
 
   // Save settings
   useEffect(() => {
@@ -165,6 +181,8 @@ export default function Page() {
           view,
           liveOnly,
           showAllTeams,
+          autoSelectPinned, // ✅ NEW
+          showPinned,       // ✅ NEW
           selectedTeams: Array.from(selectedTeams),
           pinnedTeams: Array.from(pinnedTeams)
         })
@@ -172,7 +190,7 @@ export default function Page() {
     } catch {
       // ignore
     }
-  }, [view, liveOnly, showAllTeams, selectedTeams, pinnedTeams]);
+  }, [view, liveOnly, showAllTeams, autoSelectPinned, showPinned, selectedTeams, pinnedTeams]);
 
   async function fetchGames() {
     setLoading(true);
@@ -233,7 +251,7 @@ export default function Page() {
   }
 
   function clearSelection() {
-    setSelectedTeams(new Set()); // empty => show all games
+    setSelectedTeams(new Set()); // empty => show all games (unless autoSelectPinned fills it next render)
   }
 
   function pinTeam(team) {
@@ -266,10 +284,7 @@ export default function Page() {
 
     if (liveOnly) list = list.filter((g) => g?.status === "LIVE");
 
-    list.sort(
-      (a, b) =>
-        new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime()
-    );
+    list.sort((a, b) => new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime());
     return list;
   }, [games, selectedTeams, liveOnly]);
 
@@ -298,25 +313,13 @@ export default function Page() {
         <h1 style={{ margin: "6px 0", fontSize: 20 }}>🥎 Softball Dashboard (Private)</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>
-            Today
-          </button>
-          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>
-            This Week
-          </button>
-          <button onClick={() => setView("month")} style={btnStyle(view === "month")}>
-            Next 30
-          </button>
-          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>
-            Season
-          </button>
+          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>Today</button>
+          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>This Week</button>
+          <button onClick={() => setView("month")} style={btnStyle(view === "month")}>Next 30</button>
+          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>Season</button>
 
           <label style={toggleStyle}>
-            <input
-              type="checkbox"
-              checked={liveOnly}
-              onChange={(e) => setLiveOnly(e.target.checked)}
-            />
+            <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
             Live games only
           </label>
 
@@ -335,16 +338,26 @@ export default function Page() {
               (toggles are saved automatically • empty selection = show all games)
             </span>
 
-            <div
-              style={{
-                marginLeft: "auto",
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                flexWrap: "wrap"
-              }}
-            >
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
+
+              <label style={toggleStyle}>
+                <input
+                  type="checkbox"
+                  checked={autoSelectPinned}
+                  onChange={(e) => setAutoSelectPinned(e.target.checked)}
+                />
+                Auto-select pinned
+              </label>
+
+              <label style={toggleStyle}>
+                <input
+                  type="checkbox"
+                  checked={showPinned}
+                  onChange={(e) => setShowPinned(e.target.checked)}
+                />
+                Show pinned
+              </label>
 
               <label style={toggleStyle}>
                 <input
@@ -355,67 +368,65 @@ export default function Page() {
                 All teams
               </label>
 
-              <button onClick={selectAll} style={smallBtn}>
-                Select all
-              </button>
-              <button onClick={clearSelection} style={smallBtn}>
-                Clear
-              </button>
+              <button onClick={selectAll} style={smallBtn}>Select all</button>
+              <button onClick={clearSelection} style={smallBtn}>Clear</button>
             </div>
           </div>
 
           {/* Pinned */}
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
-              <strong style={{ color: "#111" }}>Pinned</strong> (your shortlist)
-            </div>
-
-            {Array.from(pinnedTeams).length === 0 ? (
-              <div style={{ fontSize: 12, color: "#555" }}>No pinned teams yet.</div>
-            ) : (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {Array.from(pinnedTeams)
-                  .sort((a, b) => a.localeCompare(b))
-                  .map((t) => {
-                    const on = selectedTeams.has(t);
-                    return (
-                      <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        <button
-                          onClick={() => toggleTeam(t)}
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 999,
-                            border: "1px solid #ddd",
-                            background: on ? "#111" : "#fff",
-                            color: on ? "#fff" : "#111",
-                            fontSize: 13,
-                            fontWeight: 800
-                          }}
-                          title="Toggle filter"
-                        >
-                          📌 {t}
-                        </button>
-                        <button
-                          onClick={() => unpinTeam(t)}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 999,
-                            border: "1px solid #ddd",
-                            background: "#fff",
-                            cursor: "pointer",
-                            fontWeight: 900
-                          }}
-                          title="Remove from pinned"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
+          {showPinned ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
+                <strong style={{ color: "#111" }}>Pinned</strong> (your shortlist)
               </div>
-            )}
-          </div>
+
+              {Array.from(pinnedTeams).length === 0 ? (
+                <div style={{ fontSize: 12, color: "#555" }}>No pinned teams yet.</div>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {Array.from(pinnedTeams)
+                    .sort((a, b) => a.localeCompare(b))
+                    .map((t) => {
+                      const on = selectedTeams.has(t);
+                      return (
+                        <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          <button
+                            onClick={() => toggleTeam(t)}
+                            style={{
+                              padding: "8px 10px",
+                              borderRadius: 999,
+                              border: "1px solid #ddd",
+                              background: on ? "#111" : "#fff",
+                              color: on ? "#fff" : "#111",
+                              fontSize: 13,
+                              fontWeight: 800
+                            }}
+                            title="Toggle filter"
+                          >
+                            📌 {t}
+                          </button>
+                          <button
+                            onClick={() => unpinTeam(t)}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 999,
+                              border: "1px solid #ddd",
+                              background: "#fff",
+                              cursor: "pointer",
+                              fontWeight: 900
+                            }}
+                            title="Remove from pinned"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {/* Search + Add to pinned */}
           <div style={{ marginTop: 14 }}>
@@ -511,7 +522,6 @@ export default function Page() {
           <div style={{ marginTop: 10, display: "grid", gap: 14 }}>
             {groupedByDay.map((day) => (
               <div key={day.key}>
-                {/* ✅ Better “day change” header */}
                 <div style={dayHeaderStyle}>
                   <span style={dayHeaderAccent} />
                   <span>{day.header || day.key}</span>
@@ -522,32 +532,25 @@ export default function Page() {
                     <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
                       <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                         <div style={{ fontWeight: 900 }}>
-                          {/* Away */}
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             <RankPill rank={g.awayRank} />
                             <span>{g.awayTeam}</span>
                             {g.awayRecord ? (
-                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
-                                ({g.awayRecord})
-                              </span>
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>({g.awayRecord})</span>
                             ) : null}
                           </span>
 
                           <span style={{ fontWeight: 400, margin: "0 8px" }}>at</span>
 
-                          {/* Home */}
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             <RankPill rank={g.homeRank} />
                             <span>{g.homeTeam}</span>
                             {g.homeRecord ? (
-                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
-                                ({g.homeRecord})
-                              </span>
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>({g.homeRecord})</span>
                             ) : null}
                           </span>
                         </div>
 
-                        {/* ✅ Date is LEFT of time */}
                         <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
                           {formatLocalDateTime(g.startTime)}
                         </div>
@@ -606,16 +609,7 @@ function StatusPill({ status }) {
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span
-      style={{
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: s.bg,
-        color: s.fg,
-        fontSize: 12,
-        fontWeight: 900
-      }}
-    >
+    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 900 }}>
       {s.text}
     </span>
   );
@@ -674,7 +668,7 @@ const linkBtn = {
   fontSize: 13
 };
 
-// ✅ Styles for “day changes” (Tue/Wed/Thu…)
+// Styles for “day changes”
 const dayHeaderStyle = {
   position: "sticky",
   top: 0,
