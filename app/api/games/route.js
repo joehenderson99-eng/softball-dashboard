@@ -7,8 +7,8 @@ const ESPN_SCOREBOARD =
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: { "user-agent": "softball-dashboard/1.0" },
-    // Vercel edge/CDN can cache a bit; for live-ish scores you can keep it dynamic:
-    cache: "no-store"
+    // Vercel edge caching can be weird; keep it fresh:
+    cache: "no-store",
   });
   if (!res.ok) throw new Error(`Upstream failed ${res.status} for ${url}`);
   return res.json();
@@ -40,13 +40,15 @@ function addDays(d, days) {
 }
 
 function getSeasonRange(now = new Date()) {
-  // Softball "season-ish" window: Feb 1 -> Aug 1.
   const y = now.getFullYear();
   const feb1 = new Date(y, 1, 1);
   const aug1 = new Date(y, 7, 1);
 
   if (now > aug1) {
-    return { start: startOfDay(new Date(y + 1, 1, 1)), end: endOfDay(new Date(y + 1, 7, 1)) };
+    return {
+      start: startOfDay(new Date(y + 1, 1, 1)),
+      end: endOfDay(new Date(y + 1, 7, 1)),
+    };
   }
   if (now < feb1) {
     return { start: startOfDay(feb1), end: endOfDay(aug1) };
@@ -86,68 +88,46 @@ function yyyymmdd(d) {
   return `${y}${m}${day}`;
 }
 
-// --- TEAM NORMALIZATION ---
-//
-// ESPN often returns "Princeton Tigers", "Santa Clara Broncos", etc.
-// This function tries hard to convert to just the school name.
-//
-// Strategy:
-// 1) normalize punctuation/dashes/whitespace
-// 2) apply aliases (Cal -> California, Sac State -> Sacramento State, etc.)
-// 3) strip mascot words by matching the "school portion":
-//    - if the name has 2+ words and last word is likely a mascot (plural/known patterns),
-//      remove trailing mascot chunk.
-//    - also handle "State", "St.", "University" cases carefully.
-function normalizeTeamName(name) {
-  if (!name) return "";
+/**
+ * Normalize team name into “school-ish” label.
+ * ESPN often includes mascot in displayName; shortDisplayName is usually school.
+ */
+function normalizeTeamNameFromCompetitor(comp) {
+  const team = comp?.team;
+  const raw =
+    team?.shortDisplayName ||
+    team?.displayName ||
+    team?.name ||
+    "";
+  return String(raw).trim().replace(/\s+/g, " ");
+}
 
-  let n = String(name)
-    .trim()
-    .replace(/[–—]/g, "-")
-    .replace(/\s+/g, " ");
+function pickRecordSummary(comp) {
+  // ESPN often: competitor.records[0].summary => "12-5" (sometimes includes conference etc in other entries)
+  const recs = Array.isArray(comp?.records) ? comp.records : [];
+  const summary = recs.find((r) => typeof r?.summary === "string")?.summary;
+  return summary || null;
+}
 
-  const ALIASES = new Map([
-    ["Cal", "California"],
-    ["Boise St", "Boise State"],
-    ["Sac State", "Sacramento State"],
-    ["Sacramento St", "Sacramento State"],
-    ["Idaho St", "Idaho State"],
-    ["Fresno St", "Fresno State"],
-    ["SC State", "South Carolina State"],
-    ["Nebraska Kearney", "Nebraska-Kearney"],
-    ["Nebraska–Kearney", "Nebraska-Kearney"],
-    ["CSU Stanislaus", "Stanislaus State"],
-    ["Stanislaus St", "Stanislaus State"],
-    ["San José State", "San Jose State"]
-  ]);
-  if (ALIASES.has(n)) n = ALIASES.get(n);
+function pickWatchLink(ev, comp) {
+  // Prefer explicit "watch" link if present
+  const links = Array.isArray(ev?.links) ? ev.links : [];
+  const watch = links.find((l) => Array.isArray(l?.rel) && l.rel.some((r) => String(r).toLowerCase().includes("watch")));
+  const desktop = links.find((l) => Array.isArray(l?.rel) && l.rel.some((r) => String(r).toLowerCase().includes("desktop")));
+  const any = links[0];
 
-  // If already a short school-like name, return it
-  if (n.split(" ").length <= 2) return n;
+  // Sometimes broadcasts exist but no watch link; still helpful to show provider label
+  const url = watch?.href || desktop?.href || any?.href || null;
 
-  // Common mascot-ish endings (very safe heuristics)
-  // - Plurals: Tigers, Broncos, Hornets, Ducks, etc.
-  // - Single-word mascots typically end with "s" (not always, but often)
-  // We'll strip only the LAST word if it looks like a mascot, keeping the school part.
-  const parts = n.split(" ");
-  const last = parts[parts.length - 1];
+  // Broadcast/provider label
+  const broadcasts = Array.isArray(comp?.broadcasts) ? comp.broadcasts : [];
+  const names = broadcasts
+    .map((b) => b?.names?.join?.(", ") || b?.name || b?.market || b?.type?.shortName || b?.type?.name)
+    .filter(Boolean);
 
-  const looksLikeMascot =
-    /^[A-Z][a-z]+s$/.test(last) || // Tigers, Broncos, Hornets, Ducks...
-    /^(Aggies|Tigers|Broncos|Hornets|Ducks|Beavers|Bruins|Huskies|Spartans|Tommies|Boilermakers|Royals|Rebels|Volunteers|Sooners|Gators|Seminoles|Tar\s?Heels|Wildcats|Panthers|Cowgirls|Lions|Bison|Ospreys|Knights|Seahawks|Roadrunners|Shockers|Badgers|Blazers|Great\s?Danes|Warhawks|Retrievers|Ragin'\s?Cajuns)$/i.test(
-      last
-    );
+  const label = names.length ? names.join(" • ") : null;
 
-  if (looksLikeMascot) {
-    // Strip only the mascot word
-    n = parts.slice(0, -1).join(" ");
-  }
-
-  // Re-apply aliases once more after stripping
-  n = n.replace(/\s+/g, " ").trim();
-  if (ALIASES.has(n)) n = ALIASES.get(n);
-
-  return n;
+  return { watchUrl: url, watchLabel: label };
 }
 
 function extractEspnGames(payload) {
@@ -156,19 +136,16 @@ function extractEspnGames(payload) {
 
   for (const ev of events) {
     const comp = ev?.competitions?.[0];
-    const competitors = comp?.competitors || [];
+    if (!comp) continue;
+
+    const competitors = Array.isArray(comp?.competitors) ? comp.competitors : [];
     const home = competitors.find((c) => c.homeAway === "home");
     const away = competitors.find((c) => c.homeAway === "away");
-    if (!home?.team || !away?.team) continue;
+    if (!home || !away) continue;
 
-    // IMPORTANT:
-    // shortDisplayName is usually the SCHOOL without mascot (best for your filtering).
-    const homeName =
-      home.team.shortDisplayName || home.team.displayName || home.team.name || home.team.abbreviation;
-    const awayName =
-      away.team.shortDisplayName || away.team.displayName || away.team.name || away.team.abbreviation;
-
-    if (!homeName || !awayName) continue;
+    const homeTeam = normalizeTeamNameFromCompetitor(home);
+    const awayTeam = normalizeTeamNameFromCompetitor(away);
+    if (!homeTeam || !awayTeam) continue;
 
     const startTime = comp?.date || ev?.date || null;
     const status = normalizeStatus(comp?.status?.type?.description || comp?.status?.type?.name);
@@ -180,65 +157,50 @@ function extractEspnGames(payload) {
     const awayRank = away?.curatedRank?.current ?? null;
 
     const gameUrl =
-      ev?.links?.find((l) => l?.rel?.includes("desktop"))?.href || ev?.links?.[0]?.href || null;
+      ev?.links?.find((l) => Array.isArray(l?.rel) && l.rel.includes("desktop"))?.href ||
+      ev?.links?.[0]?.href ||
+      null;
+
+    const { watchUrl, watchLabel } = pickWatchLink(ev, comp);
+
+    const homeRecord = pickRecordSummary(home);
+    const awayRecord = pickRecordSummary(away);
 
     const id =
       ev?.id ||
-      `${awayName}-${homeName}-${startTime || ""}`.replace(/\s+/g, "_");
+      `${awayTeam}-${homeTeam}-${startTime || ""}`.replace(/\s+/g, "_");
 
     games.push({
       id: `espn_${id}`,
       startTime,
       status,
-      homeTeam: normalizeTeamName(homeName),
-      awayTeam: normalizeTeamName(awayName),
+      homeTeam,
+      awayTeam,
       homeScore,
       awayScore,
+      homeRank,
+      awayRank,
+      homeRecord,
+      awayRecord,
       gameUrl,
       boxUrl: gameUrl,
-      watchUrl: gameUrl,
-      homeRank,
-      awayRank
+      watchUrl,
+      watchLabel,
     });
   }
 
   return games;
 }
 
-async function fetchInBatches(urls, batchSize = 10) {
-  const out = [];
-  for (let i = 0; i < urls.length; i += batchSize) {
-    const batch = urls.slice(i, i + batchSize);
-    const results = await Promise.all(batch.map((u) => fetchJson(u)));
-    out.push(...results);
-  }
-  return out;
-}
-
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
+    const range = (searchParams.get("range") || "week").toLowerCase();
 
-    // Support either:
-    // - /api/games?range=week
-    // OR
-    // - /api/games?from=ISO&to=ISO
-    const range = (searchParams.get("range") || "").toLowerCase();
-    const from = searchParams.get("from");
-    const to = searchParams.get("to");
+    const { startDate, endDate } = computeRange(range);
 
-    let startDate, endDate;
-    if (from && to) {
-      startDate = startOfDay(new Date(from));
-      endDate = endOfDay(new Date(to));
-    } else {
-      const computed = computeRange(range || "week");
-      startDate = computed.startDate;
-      endDate = computed.endDate;
-    }
-
-    // Keep Vercel stable. You can raise this later.
-    const MAX_DAYS = range === "season" ? 90 : 35;
+    // Keep Vercel stable (scoreboard is per-day)
+    const MAX_DAYS = range === "season" ? 60 : 31;
 
     const dates = [];
     for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
@@ -246,37 +208,32 @@ export async function GET(req) {
       if (dates.length >= MAX_DAYS) break;
     }
 
-    const urls = dates.map((d) => `${ESPN_SCOREBOARD}?dates=${yyyymmdd(d)}`);
-    const payloads = await fetchInBatches(urls, 10);
+    const payloads = await Promise.all(
+      dates.map((d) => fetchJson(`${ESPN_SCOREBOARD}?dates=${yyyymmdd(d)}`))
+    );
 
     const all = [];
     for (const p of payloads) all.push(...extractEspnGames(p));
 
     // Dedup
-    const byKey = new Map();
-    for (const g of all) {
-      const key = `${g.startTime || ""}|${g.awayTeam}|${g.homeTeam}`;
-      byKey.set(key, g);
-    }
-    const allGames = Array.from(byKey.values());
+    const byId = new Map();
+    for (const g of all) byId.set(g.id, g);
+    const allGames = Array.from(byId.values());
 
-    // Filter to window (if we have startTime)
+    // Window filter
     const filtered = allGames.filter((g) => {
       if (!g.startTime) return false;
       const t = new Date(g.startTime).getTime();
       return t >= startDate.getTime() && t <= endDate.getTime();
     });
 
-    // Sort
-    filtered.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-
     return Response.json({
-      range: range || (from && to ? "custom" : "week"),
+      range,
       startDate: startDate.toISOString(),
       endDate: endDate.toISOString(),
       fetchedDays: dates.length,
       count: filtered.length,
-      games: filtered
+      games: filtered,
     });
   } catch (err) {
     return Response.json({ error: String(err?.message || err) }, { status: 500 });
