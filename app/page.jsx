@@ -14,14 +14,23 @@ function formatLocalTime(isoString) {
   }
 }
 
-function formatLocalDate(isoString) {
+function formatLocalDateHeader(isoString) {
   if (!isoString) return "";
   try {
     const d = new Date(isoString);
-    return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
   } catch {
     return "";
   }
+}
+
+function dateKeyLocal(isoString) {
+  if (!isoString) return "unknown";
+  const d = new Date(isoString);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`; // local day key
 }
 
 function normalizeLabel(name) {
@@ -29,18 +38,57 @@ function normalizeLabel(name) {
   return String(name).trim().replace(/\s+/g, " ");
 }
 
+function rankBadgeStyle(rank) {
+  if (!rank) return null;
+
+  // Subtle highlight (no crazy colors)
+  if (rank <= 10) {
+    return {
+      border: "1px solid #d4b106",
+      background: "#fff7d6",
+      color: "#5c4a00",
+    };
+  }
+  if (rank <= 25) {
+    return {
+      border: "1px solid #2f54eb",
+      background: "#e6f0ff",
+      color: "#10239e",
+    };
+  }
+  return {
+    border: "1px solid #bbb",
+    background: "#f3f3f3",
+    color: "#222",
+  };
+}
+
+function RankPill({ rank }) {
+  if (!rank) return null;
+  const s = rankBadgeStyle(rank);
+  return (
+    <span
+      style={{
+        ...s,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 900,
+        lineHeight: "16px",
+      }}
+    >
+      #{rank}
+    </span>
+  );
+}
+
 export default function Page() {
   const [view, setView] = useState("today"); // today | week | month | season
   const [liveOnly, setLiveOnly] = useState(false);
 
-  // selectedTeams = active filter selection
-  // IMPORTANT: empty set => show ALL games
+  // empty set => show ALL games
   const [selectedTeams, setSelectedTeams] = useState(() => new Set());
-
-  // pinnedTeams = saved shortlist (always shown)
   const [pinnedTeams, setPinnedTeams] = useState(() => new Set(["Stanford", "Oklahoma"]));
-
-  // show/hide the "All teams" list
   const [showAllTeams, setShowAllTeams] = useState(false);
 
   const [games, setGames] = useState([]);
@@ -63,9 +111,7 @@ export default function Page() {
 
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
       if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   // Save settings
@@ -78,19 +124,19 @@ export default function Page() {
           liveOnly,
           showAllTeams,
           selectedTeams: Array.from(selectedTeams),
-          pinnedTeams: Array.from(pinnedTeams)
+          pinnedTeams: Array.from(pinnedTeams),
         })
       );
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, [view, liveOnly, showAllTeams, selectedTeams, pinnedTeams]);
 
   async function fetchGames() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, { cache: "no-store" });
+      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data = await res.json();
 
@@ -104,15 +150,12 @@ export default function Page() {
     }
   }
 
-  // Initial load + refresh loop
   useEffect(() => {
     fetchGames();
     const interval = setInterval(fetchGames, 30_000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  // Build team list automatically from current games
   const allTeams = useMemo(() => {
     const s = new Set();
     for (const g of games) {
@@ -122,14 +165,10 @@ export default function Page() {
     return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [games]);
 
-  // Search matches (for adding to pinned)
   const searchMatches = useMemo(() => {
     const q = teamSearch.trim().toLowerCase();
     if (!q) return [];
-    // show up to 12 matches
-    return allTeams
-      .filter((t) => t.toLowerCase().includes(q))
-      .slice(0, 12);
+    return allTeams.filter((t) => t.toLowerCase().includes(q)).slice(0, 12);
   }, [teamSearch, allTeams]);
 
   function toggleTeam(team) {
@@ -148,17 +187,13 @@ export default function Page() {
   }
 
   function clearSelection() {
-    setSelectedTeams(new Set()); // EMPTY => show all games
+    setSelectedTeams(new Set());
   }
 
   function pinTeam(team) {
     const t = normalizeLabel(team);
     if (!t) return;
-    setPinnedTeams((prev) => {
-      const next = new Set(prev);
-      next.add(t);
-      return next;
-    });
+    setPinnedTeams((prev) => new Set([...prev, t]));
     setTeamSearch("");
   }
 
@@ -171,11 +206,9 @@ export default function Page() {
     });
   }
 
-  // Filtered games
   const filtered = useMemo(() => {
     let list = Array.isArray(games) ? [...games] : [];
 
-    // empty selection => show ALL games
     if (selectedTeams.size > 0) {
       list = list.filter((g) => {
         const h = normalizeLabel(g?.homeTeam);
@@ -186,14 +219,21 @@ export default function Page() {
 
     if (liveOnly) list = list.filter((g) => g?.status === "LIVE");
 
-    list.sort((a, b) => {
-      const ta = new Date(a?.startTime || 0).getTime();
-      const tb = new Date(b?.startTime || 0).getTime();
-      return ta - tb;
-    });
-
+    list.sort((a, b) => new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime());
     return list;
   }, [games, selectedTeams, liveOnly]);
+
+  // GROUP BY DAY (date headers)
+  const groupedByDay = useMemo(() => {
+    const map = new Map();
+    for (const g of filtered) {
+      const key = dateKeyLocal(g?.startTime);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(g);
+    }
+    const keys = Array.from(map.keys()).sort((a, b) => (a < b ? -1 : 1));
+    return keys.map((k) => ({ key: k, header: formatLocalDateHeader(map.get(k)?.[0]?.startTime), games: map.get(k) }));
+  }, [filtered]);
 
   return (
     <div style={{ padding: 14, maxWidth: 1100, margin: "0 auto" }}>
@@ -230,11 +270,7 @@ export default function Page() {
               <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
 
               <label style={toggleStyle}>
-                <input
-                  type="checkbox"
-                  checked={showAllTeams}
-                  onChange={(e) => setShowAllTeams(e.target.checked)}
-                />
+                <input type="checkbox" checked={showAllTeams} onChange={(e) => setShowAllTeams(e.target.checked)} />
                 All teams
               </label>
 
@@ -243,7 +279,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Pinned (always visible) */}
+          {/* Pinned */}
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
               <strong style={{ color: "#111" }}>Pinned</strong> (your shortlist)
@@ -253,45 +289,43 @@ export default function Page() {
               <div style={{ fontSize: 12, color: "#555" }}>No pinned teams yet.</div>
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {Array.from(pinnedTeams)
-                  .sort((a, b) => a.localeCompare(b))
-                  .map((t) => {
-                    const on = selectedTeams.has(t);
-                    return (
-                      <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        <button
-                          onClick={() => toggleTeam(t)}
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 999,
-                            border: "1px solid #ddd",
-                            background: on ? "#111" : "#fff",
-                            color: on ? "#fff" : "#111",
-                            fontSize: 13,
-                            fontWeight: 700
-                          }}
-                          title="Toggle filter"
-                        >
-                          📌 {t}
-                        </button>
-                        <button
-                          onClick={() => unpinTeam(t)}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 999,
-                            border: "1px solid #ddd",
-                            background: "#fff",
-                            cursor: "pointer",
-                            fontWeight: 900
-                          }}
-                          title="Remove from pinned"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
+                {Array.from(pinnedTeams).sort((a, b) => a.localeCompare(b)).map((t) => {
+                  const on = selectedTeams.has(t);
+                  return (
+                    <div key={t} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      <button
+                        onClick={() => toggleTeam(t)}
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: 999,
+                          border: "1px solid #ddd",
+                          background: on ? "#111" : "#fff",
+                          color: on ? "#fff" : "#111",
+                          fontSize: 13,
+                          fontWeight: 800,
+                        }}
+                        title="Toggle filter"
+                      >
+                        📌 {t}
+                      </button>
+                      <button
+                        onClick={() => unpinTeam(t)}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 999,
+                          border: "1px solid #ddd",
+                          background: "#fff",
+                          cursor: "pointer",
+                          fontWeight: 900,
+                        }}
+                        title="Remove from pinned"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -308,10 +342,12 @@ export default function Page() {
                   padding: "10px 12px",
                   borderRadius: 12,
                   border: "1px solid #ddd",
-                  fontSize: 13
+                  fontSize: 13,
                 }}
               />
-              <div style={{ fontSize: 12, color: "#555" }}>Type a school name (mascots are handled).</div>
+              <div style={{ fontSize: 12, color: "#555" }}>
+                Type a school name (mascots are handled).
+              </div>
             </div>
 
             {teamSearch.trim() && (
@@ -329,8 +365,8 @@ export default function Page() {
                         border: "1px solid #ddd",
                         background: "#fff",
                         fontSize: 13,
-                        fontWeight: 700,
-                        cursor: "pointer"
+                        fontWeight: 800,
+                        cursor: "pointer",
                       }}
                       title="Add to pinned"
                     >
@@ -342,7 +378,7 @@ export default function Page() {
             )}
           </div>
 
-          {/* All teams list (big) - controlled by toggle */}
+          {/* All teams list */}
           {showAllTeams ? (
             <div style={{ marginTop: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -365,7 +401,7 @@ export default function Page() {
                         border: "1px solid #ddd",
                         background: on ? "#111" : "#fff",
                         color: on ? "#fff" : "#111",
-                        fontSize: 13
+                        fontSize: 13,
                       }}
                       title="Toggle filter"
                     >
@@ -387,39 +423,87 @@ export default function Page() {
 
           {error ? <div style={{ marginTop: 10, color: "crimson" }}>{error}</div> : null}
 
-          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-            {filtered.map((g) => (
-              <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 800 }}>
-                    {g.awayRank ? `#${g.awayRank} ` : ""}{g.awayTeam}{" "}
-                    <span style={{ fontWeight: 400 }}>at</span>{" "}
-                    {g.homeRank ? `#${g.homeRank} ` : ""}{g.homeTeam}
-                  </div>
-
-                  <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-                    {formatLocalDate(g.startTime)} • {formatLocalTime(g.startTime)}
-                  </div>
+          <div style={{ marginTop: 10, display: "grid", gap: 14 }}>
+            {groupedByDay.map((day) => (
+              <div key={day.key}>
+                {/* DATE HEADER */}
+                <div
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1,
+                    background: "#fff",
+                    padding: "10px 0 6px",
+                    borderBottom: "1px solid #eee",
+                    fontWeight: 900,
+                  }}
+                >
+                  {day.header || day.key}
                 </div>
 
-                <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                  <StatusPill status={g.status} />
-                  <span style={{ fontSize: 14 }}>
-                    {g.status === "LIVE" && `LIVE • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
-                    {g.status === "FINAL" && `Final • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
-                  </span>
-                </div>
+                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                  {day.games.map((g) => (
+                    <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 900 }}>
+                          {/* Away */}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <RankPill rank={g.awayRank} />
+                            <span>{g.awayTeam}</span>
+                            {g.awayRecord ? (
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
+                                ({g.awayRecord})
+                              </span>
+                            ) : null}
+                          </span>
 
-                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {g.watchUrl ? (
-                    <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>📺 Watch</a>
-                  ) : null}
-                  {g.gameUrl ? (
-                    <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>📋 Game info</a>
-                  ) : null}
-                  {g.boxUrl ? (
-                    <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>📊 Box score</a>
-                  ) : null}
+                          <span style={{ fontWeight: 400, margin: "0 8px" }}>at</span>
+
+                          {/* Home */}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <RankPill rank={g.homeRank} />
+                            <span>{g.homeTeam}</span>
+                            {g.homeRecord ? (
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
+                                ({g.homeRecord})
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+
+                        <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
+                          {formatLocalTime(g.startTime)}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <StatusPill status={g.status} />
+                        <span style={{ fontSize: 14 }}>
+                          {g.status === "LIVE" && `LIVE • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
+                          {g.status === "FINAL" && `Final • ${g.awayScore ?? "-"}–${g.homeScore ?? "-"}`}
+                          {g.status === "SCHEDULED" ? "" : ""}
+                        </span>
+                      </div>
+
+                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {g.watchUrl ? (
+                          <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                            📺 Watch{g.watchLabel ? ` • ${g.watchLabel}` : ""}
+                          </a>
+                        ) : null}
+                        {g.gameUrl ? (
+                          <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                            📋 Game info
+                          </a>
+                        ) : null}
+                        {g.boxUrl ? (
+                          <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>
+                            📊 Box score
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -444,11 +528,11 @@ function StatusPill({ status }) {
   const map = {
     SCHEDULED: { text: "Scheduled", bg: "#f3f3f3", fg: "#222" },
     LIVE: { text: "LIVE", bg: "#111", fg: "#fff" },
-    FINAL: { text: "Final", bg: "#f3f3f3", fg: "#222" }
+    FINAL: { text: "Final", bg: "#f3f3f3", fg: "#222" },
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 800 }}>
+    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 900 }}>
       {s.text}
     </span>
   );
@@ -461,8 +545,8 @@ function btnStyle(active) {
     border: "1px solid #ddd",
     background: active ? "#111" : "#fff",
     color: active ? "#fff" : "#111",
-    fontWeight: 800,
-    cursor: "pointer"
+    fontWeight: 900,
+    cursor: "pointer",
   };
 }
 
@@ -474,8 +558,8 @@ const toggleStyle = {
   border: "1px solid #ddd",
   borderRadius: 12,
   fontSize: 12,
-  fontWeight: 800,
-  background: "#fff"
+  fontWeight: 900,
+  background: "#fff",
 };
 
 const smallBtn = {
@@ -483,15 +567,15 @@ const smallBtn = {
   borderRadius: 12,
   border: "1px solid #ddd",
   background: "#fff",
-  fontWeight: 800,
-  cursor: "pointer"
+  fontWeight: 900,
+  cursor: "pointer",
 };
 
 const cardStyle = {
   border: "1px solid #ddd",
   borderRadius: 18,
   padding: 12,
-  boxShadow: "0 1px 8px rgba(0,0,0,0.04)"
+  boxShadow: "0 1px 8px rgba(0,0,0,0.04)",
 };
 
 const linkBtn = {
@@ -503,6 +587,6 @@ const linkBtn = {
   border: "1px solid #ddd",
   textDecoration: "none",
   color: "#111",
-  fontWeight: 800,
-  fontSize: 13
+  fontWeight: 900,
+  fontSize: 13,
 };
