@@ -88,7 +88,31 @@ export default function Page() {
 
   // empty set => show ALL games
   const [selectedTeams, setSelectedTeams] = useState(() => new Set());
-  const [pinnedTeams, setPinnedTeams] = useState(() => new Set(["Stanford", "Oklahoma"]));
+ const DEFAULT_PINNED = [
+  "Abilene Chrstn",
+  "Boise State",
+  "California",
+  "Columbia",
+  "Fresno State",
+  "Idaho State",
+  "Iowa",
+  "Maine",
+  "Memphis",
+  "Nevada",
+  "North Carolina",
+  "Oklahoma",
+  "Pacific",
+  "Princeton",
+  "Sacramento State",
+  "San Diego",
+  "San Diego St",
+  "Santa Clara",
+  "Stanford",
+  "UC Davis",
+  "Weber St"
+];
+
+const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
   const [showAllTeams, setShowAllTeams] = useState(false);
 
   const [games, setGames] = useState([]);
@@ -99,6 +123,26 @@ export default function Page() {
   const [teamSearch, setTeamSearch] = useState("");
 
   // Load saved settings
+  const PINNED_MIGRATION_KEY = "softball_dashboard_pins_migrated_v3";
+
+useEffect(() => {
+  try {
+    const migrated = localStorage.getItem(PINNED_MIGRATION_KEY);
+    if (migrated) return;
+
+    // Force-update pinned list one time
+    setPinnedTeams(new Set(DEFAULT_PINNED));
+
+    // Optional: also turn on those pinned teams in your selected filter
+    // Comment out if you don't want that behavior:
+    // setSelectedTeams(new Set(DEFAULT_PINNED));
+
+    localStorage.setItem(PINNED_MIGRATION_KEY, "1");
+  } catch {
+    // ignore
+  }
+}, []);
+  
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
