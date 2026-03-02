@@ -4,70 +4,43 @@ import { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "softball_dashboard_v2_settings";
 
-/**
- * Normalize team names coming back from APIs so filters/pills match consistently.
- * Keep this lightweight—just handles common punctuation/dashes/extra spaces.
- */
-function normalizeTeamName(name) {
-  if (!name) return "";
-  return String(name)
-    .trim()
-    .replace(/[–—]/g, "-") // normalize en/em dashes to hyphen
-    .replace(/\s+/g, " "); // collapse whitespace
-}
-
-// Optional: pretty short names for the UI pills + matchup display.
-// Anything not listed will fall back to the normalized name.
-const DISPLAY_NAME = {
-  "Boise State": "Boise St",
-  "UC Davis": "UC Davis",
-  California: "Cal",
-  "Weber State": "Weber St",
-  "Sacramento State": "Sac State",
-  "Idaho State": "Idaho St",
-  "Fresno State": "Fresno St",
-  "South Carolina State": "SC State",
-  "Nebraska-Kearney": "Nebraska-Kearney",
-  "Stanislaus State": "Stanislaus St"
-};
-
-function formatLocalDateTime(isoString) {
+function formatLocalTime(isoString) {
   if (!isoString) return "";
   try {
     const d = new Date(isoString);
-    const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `${date} • ${time}`;
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function formatLocalDate(isoString) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   } catch {
     return "";
   }
 }
 
 export default function Page() {
-  // IMPORTANT:
-  // Your API route now expects `range` (today | week | 30 | season).
-  const [view, setView] = useState("today"); // today | week | 30 | season
+  const [view, setView] = useState("today"); // today | week | month | season
   const [liveOnly, setLiveOnly] = useState(false);
 
-  // games from API (we will normalize team names before storing here)
+  // selectedTeams = your active filter selection
+  // IMPORTANT: empty set => show ALL games
+  const [selectedTeams, setSelectedTeams] = useState(() => new Set());
+
+  // pinnedTeams = your saved shortlist (separate from selection)
+  const [pinnedTeams, setPinnedTeams] = useState(() => new Set(["Stanford", "Oklahoma"]));
+
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState("");
 
-  // Dynamic team list built from fetched games
-  const allTeams = useMemo(() => {
-    const s = new Set();
-    for (const g of games) {
-      if (g?.homeTeam) s.add(g.homeTeam);
-      if (g?.awayTeam) s.add(g.awayTeam);
-    }
-    // Sort for stable UI
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [games]);
-
-  // Selected teams (dynamic)
-  const [selectedTeams, setSelectedTeams] = useState(() => new Set());
+  const [teamSearch, setTeamSearch] = useState("");
 
   // Load saved settings
   useEffect(() => {
@@ -75,9 +48,12 @@ export default function Page() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
+
       if (parsed?.view) setView(parsed.view);
       if (typeof parsed?.liveOnly === "boolean") setLiveOnly(parsed.liveOnly);
+
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
+      if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
     } catch {
       // ignore
     }
@@ -91,34 +67,24 @@ export default function Page() {
         JSON.stringify({
           view,
           liveOnly,
-          selectedTeams: Array.from(selectedTeams)
+          selectedTeams: Array.from(selectedTeams),
+          pinnedTeams: Array.from(pinnedTeams)
         })
       );
     } catch {
       // ignore
     }
-  }, [view, liveOnly, selectedTeams]);
+  }, [view, liveOnly, selectedTeams, pinnedTeams]);
 
-  // Fetch games from API using `range`
   async function fetchGames() {
     setLoading(true);
     setError("");
     try {
-      const qs = new URLSearchParams({ range: view }).toString();
-      const res = await fetch(`/api/games?${qs}`);
+      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data = await res.json();
 
-      const rawGames = Array.isArray(data?.games) ? data.games : [];
-
-      // Normalize team names for consistency throughout UI
-      const normalized = rawGames.map((g) => ({
-        ...g,
-        homeTeam: normalizeTeamName(g.homeTeam),
-        awayTeam: normalizeTeamName(g.awayTeam)
-      }));
-
-      setGames(normalized);
+      setGames(Array.isArray(data?.games) ? data.games : []);
       setLastUpdated(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     } catch (e) {
       setError(e?.message || "Failed to load games.");
@@ -128,25 +94,23 @@ export default function Page() {
     }
   }
 
-  // Initial load + refresh loop (live scores)
+  // Initial load + refresh loop
   useEffect(() => {
     fetchGames();
-    const interval = setInterval(fetchGames, 30_000); // 30s refresh
+    const interval = setInterval(fetchGames, 30_000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  // Keep selectedTeams in sync when the available team list changes:
-  // - If user has NOTHING selected (empty set), that means "Show all" (by your request).
-  // - Otherwise, keep their selection but drop teams that no longer exist in the current range.
-  useEffect(() => {
-    setSelectedTeams((prev) => {
-      if (!prev || prev.size === 0) return prev; // empty means "show all", preserve
-      const next = new Set();
-      for (const t of prev) if (allTeams.includes(t)) next.add(t);
-      return next;
-    });
-  }, [allTeams]);
+  // Build team list automatically from current games
+  const allTeams = useMemo(() => {
+    const s = new Set();
+    for (const g of games) {
+      if (g?.homeTeam) s.add(g.homeTeam);
+      if (g?.awayTeam) s.add(g.awayTeam);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [games]);
 
   function toggleTeam(team) {
     setSelectedTeams((prev) => {
@@ -157,36 +121,48 @@ export default function Page() {
     });
   }
 
-  function clearTeams() {
-    // Empty set = show ALL games (per your requirement)
-    setSelectedTeams(new Set());
-  }
-
-  function selectAllTeams() {
+  function selectAll() {
     setSelectedTeams(new Set(allTeams));
   }
 
-  // Filter games:
-  // - If selectedTeams is empty => show all games
-  // - Else show only games involving selected teams
-  const filtered = useMemo(() => {
+  function clearSelection() {
+    setSelectedTeams(new Set()); // EMPTY => show all games
+  }
+
+  function pinTeam(team) {
+    if (!team) return;
+    setPinnedTeams((prev) => new Set([...prev, team]));
+  }
+
+  function unpinTeam(team) {
+    setPinnedTeams((prev) => {
+      const next = new Set(prev);
+      next.delete(team);
+      return next;
+    });
+  }
+
+  const searchResults = useMemo(() => {
+    const q = teamSearch.trim().toLowerCase();
+    if (!q) return [];
+    return allTeams
+      .filter((t) => t.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [teamSearch, allTeams]);
+
+  const filteredGames = useMemo(() => {
     const sel = selectedTeams;
 
-    let list = games.filter((g) => {
-      if (!sel || sel.size === 0) return true; // SHOW ALL when nothing selected
+    let list = games;
 
-      const hit =
-        (g.homeTeam && sel.has(g.homeTeam)) || (g.awayTeam && sel.has(g.awayTeam));
-      return hit;
-    });
+    // EMPTY selection => show all games
+    if (sel.size > 0) {
+      list = list.filter((g) => (g.homeTeam && sel.has(g.homeTeam)) || (g.awayTeam && sel.has(g.awayTeam)));
+    }
 
     if (liveOnly) list = list.filter((g) => g.status === "LIVE");
 
-    list.sort((a, b) => {
-      const ta = new Date(a.startTime || 0).getTime();
-      const tb = new Date(b.startTime || 0).getTime();
-      return ta - tb;
-    });
+    list = [...list].sort((a, b) => new Date(a.startTime || 0).getTime() - new Date(b.startTime || 0).getTime());
 
     return list;
   }, [games, selectedTeams, liveOnly]);
@@ -197,34 +173,13 @@ export default function Page() {
         <h1 style={{ margin: "6px 0", fontSize: 20 }}>🥎 Softball Dashboard (Private)</h1>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>
-            Today
-          </button>
-          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>
-            This Week
-          </button>
-          <button onClick={() => setView("30")} style={btnStyle(view === "30")}>
-            Next 30
-          </button>
-          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>
-            Season
-          </button>
+          <button onClick={() => setView("today")} style={btnStyle(view === "today")}>Today</button>
+          <button onClick={() => setView("week")} style={btnStyle(view === "week")}>This Week</button>
+          <button onClick={() => setView("month")} style={btnStyle(view === "month")}>Next 30</button>
+          <button onClick={() => setView("season")} style={btnStyle(view === "season")}>Season</button>
 
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 10px",
-              border: "1px solid #ddd",
-              borderRadius: 12
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={liveOnly}
-              onChange={(e) => setLiveOnly(e.target.checked)}
-            />
+          <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid #ddd", borderRadius: 12 }}>
+            <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
             Live games only
           </label>
 
@@ -241,26 +196,92 @@ export default function Page() {
             <span style={{ fontSize: 12, color: "#555" }}>
               (toggles are saved automatically • empty selection = show all games)
             </span>
+            <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
+              Updated: {lastUpdated || "—"}
+            </div>
 
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-              <div style={{ fontSize: 12, color: "#555" }}>Updated: {lastUpdated || "—"}</div>
-              <button onClick={selectAllTeams} style={miniBtn}>
-                Select all
-              </button>
-              <button onClick={clearTeams} style={miniBtn}>
-                Clear
-              </button>
+            <button onClick={selectAll} style={miniBtn}>Select all</button>
+            <button onClick={clearSelection} style={miniBtn}>Clear</button>
+          </div>
+
+          {/* Pinned teams */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 13 }}>Pinned</strong>
+              <span style={{ fontSize: 12, color: "#555" }}>(your shortlist)</span>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+              {Array.from(pinnedTeams).sort().map((t) => {
+                const on = selectedTeams.has(t);
+                return (
+                  <div key={t} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button
+                      onClick={() => toggleTeam(t)}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 999,
+                        border: "1px solid #ddd",
+                        background: on ? "#111" : "#fff",
+                        color: on ? "#fff" : "#111",
+                        fontSize: 13
+                      }}
+                      title="Toggle filter"
+                    >
+                      📌 {t}
+                    </button>
+                    <button onClick={() => unpinTeam(t)} style={xBtn} title="Remove from pinned">
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+
+              {pinnedTeams.size === 0 ? (
+                <div style={{ fontSize: 12, color: "#666" }}>No pinned teams yet.</div>
+              ) : null}
             </div>
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-            {allTeams.length === 0 ? (
-              <div style={{ fontSize: 13, color: "#555" }}>
-                No teams found yet (try Refresh).
+          {/* Team search + add */}
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                value={teamSearch}
+                onChange={(e) => setTeamSearch(e.target.value)}
+                placeholder="Search teams to pin… (ex: Princeton)"
+                style={searchInput}
+              />
+              <span style={{ fontSize: 12, color: "#666" }}>Type a school name (mascots are handled).</span>
+            </div>
+
+            {teamSearch.trim() && (
+              <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {searchResults.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#666" }}>No matches.</div>
+                ) : (
+                  searchResults.map((t) => (
+                    <button key={t} onClick={() => pinTeam(t)} style={chipBtn} title="Add to pinned">
+                      + {t}
+                    </button>
+                  ))
+                )}
               </div>
-            ) : (
-              allTeams.map((t) => {
-                const on = selectedTeams.size === 0 ? false : selectedTeams.has(t);
+            )}
+          </div>
+
+          {/* All teams (auto) */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 13 }}>All teams (from current results)</strong>
+              <span style={{ fontSize: 12, color: "#555" }}>
+                {allTeams.length ? `${allTeams.length} found` : "No teams found yet (try Refresh)."}
+              </span>
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              {allTeams.map((t) => {
+                const on = selectedTeams.has(t);
                 return (
                   <button
                     key={t}
@@ -273,49 +294,41 @@ export default function Page() {
                       color: on ? "#fff" : "#111",
                       fontSize: 13
                     }}
-                    title={t}
+                    title="Toggle filter"
                   >
-                    {DISPLAY_NAME[t] || t}
+                    {t}
                   </button>
                 );
-              })
-            )}
+              })}
+            </div>
           </div>
         </section>
 
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <strong>Games</strong>
-            <span style={{ fontSize: 12, color: "#555" }}>{filtered.length} shown</span>
+            <span style={{ fontSize: 12, color: "#555" }}>{filteredGames.length} shown</span>
           </div>
 
           {error ? <div style={{ marginTop: 10, color: "crimson" }}>{error}</div> : null}
 
           <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-            {filtered.map((g) => (
+            {filteredGames.map((g) => (
               <div key={g.id} style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 700 }}>
                     {g.awayRank ? `#${g.awayRank} ` : ""}
-                    {DISPLAY_NAME[g.awayTeam] || g.awayTeam}{" "}
-                    <span style={{ fontWeight: 400 }}>at</span>{" "}
+                    {g.awayTeam} <span style={{ fontWeight: 400 }}>at</span>{" "}
                     {g.homeRank ? `#${g.homeRank} ` : ""}
-                    {DISPLAY_NAME[g.homeTeam] || g.homeTeam}
+                    {g.homeTeam}
                   </div>
+
                   <div style={{ marginLeft: "auto", fontSize: 12, color: "#555" }}>
-                    {formatLocalDateTime(g.startTime)}
+                    {formatLocalDate(g.startTime)} • {formatLocalTime(g.startTime)}
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 6,
-                    display: "flex",
-                    gap: 10,
-                    flexWrap: "wrap",
-                    alignItems: "center"
-                  }}
-                >
+                <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   <StatusPill status={g.status} />
                   <span style={{ fontSize: 14 }}>
                     {g.status === "SCHEDULED" ? "Scheduled" : ""}
@@ -326,25 +339,19 @@ export default function Page() {
 
                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {g.watchUrl ? (
-                    <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                      📺 Watch
-                    </a>
+                    <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>📺 Watch</a>
                   ) : null}
                   {g.gameUrl ? (
-                    <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                      📋 Game info
-                    </a>
+                    <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>📋 Game info</a>
                   ) : null}
                   {g.boxUrl ? (
-                    <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                      📊 Box score
-                    </a>
+                    <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>📊 Box score</a>
                   ) : null}
                 </div>
               </div>
             ))}
 
-            {!loading && filtered.length === 0 ? (
+            {!loading && filteredGames.length === 0 ? (
               <div style={{ color: "#555", marginTop: 8 }}>
                 No matching games found in this view/date range.
               </div>
@@ -368,16 +375,7 @@ function StatusPill({ status }) {
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span
-      style={{
-        padding: "3px 10px",
-        borderRadius: 999,
-        background: s.bg,
-        color: s.fg,
-        fontSize: 12,
-        fontWeight: 700
-      }}
-    >
+    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 700 }}>
       {s.text}
     </span>
   );
@@ -397,13 +395,45 @@ function btnStyle(active) {
 
 const miniBtn = {
   padding: "6px 10px",
-  borderRadius: 10,
+  borderRadius: 12,
   border: "1px solid #ddd",
   background: "#fff",
   color: "#111",
   fontWeight: 700,
   cursor: "pointer",
   fontSize: 12
+};
+
+const xBtn = {
+  padding: "6px 8px",
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  background: "#fff",
+  cursor: "pointer",
+  fontWeight: 900,
+  fontSize: 12,
+  lineHeight: "12px"
+};
+
+const chipBtn = {
+  padding: "8px 10px",
+  borderRadius: 999,
+  border: "1px solid #ddd",
+  background: "#fff",
+  color: "#111",
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: "pointer"
+};
+
+const searchInput = {
+  width: 320,
+  maxWidth: "100%",
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  outline: "none",
+  fontSize: 13
 };
 
 const cardStyle = {
