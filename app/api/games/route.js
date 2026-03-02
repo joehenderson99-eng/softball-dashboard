@@ -1,3 +1,5 @@
+// app/api/games/route.js
+
 export const runtime = "nodejs";
 
 function isoDateOnly(iso) {
@@ -25,10 +27,6 @@ function normalizeStatus(s) {
   return "SCHEDULED";
 }
 
-export async function GET(req) {
-  const { searchParams } = new URL(req.url);
-const range = (searchParams.get("range") || "week").toLowerCase();
-
 function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -55,7 +53,10 @@ function getSeasonRange(now = new Date()) {
   const aug1 = new Date(y, 7, 1); // Aug=7
 
   if (now > aug1) {
-    return { start: startOfDay(new Date(y + 1, 1, 1)), end: endOfDay(new Date(y + 1, 7, 1)) };
+    return {
+      start: startOfDay(new Date(y + 1, 1, 1)),
+      end: endOfDay(new Date(y + 1, 7, 1))
+    };
   }
   // If it's before Feb 1, still show upcoming season.
   if (now < feb1) {
@@ -65,27 +66,28 @@ function getSeasonRange(now = new Date()) {
   return { start: startOfDay(now), end: endOfDay(aug1) };
 }
 
-const now = new Date();
-let startDate, endDate;
+function computeRange(range) {
+  const now = new Date();
+  let startDate, endDate;
 
-if (range === "today") {
-  startDate = startOfDay(now);
-  endDate = endOfDay(now);
-} else if (range === "week") {
-  startDate = startOfDay(now);
-  endDate = endOfDay(addDays(now, 7));
-} else if (range === "month" || range === "30") {
-  startDate = startOfDay(now);
-  endDate = endOfDay(addDays(now, 30));
-} else if (range === "season") {
-  const r = getSeasonRange(now);
-  startDate = r.start;
-  endDate = r.end;
-} else {
-  // fallback
-  startDate = startOfDay(now);
-  endDate = endOfDay(addDays(now, 7));
-}
+  if (range === "today") {
+    startDate = startOfDay(now);
+    endDate = endOfDay(now);
+  } else if (range === "week") {
+    startDate = startOfDay(now);
+    endDate = endOfDay(addDays(now, 7));
+  } else if (range === "month" || range === "30") {
+    startDate = startOfDay(now);
+    endDate = endOfDay(addDays(now, 30));
+  } else if (range === "season") {
+    const r = getSeasonRange(now);
+    startDate = r.start;
+    endDate = r.end;
+  } else {
+    // fallback
+    startDate = startOfDay(now);
+    endDate = endOfDay(addDays(now, 7));
+  }
 
   return { startDate, endDate };
 }
@@ -109,7 +111,7 @@ function extractNcaaGames(payload) {
 
     const startTime = g?.game?.startTimeEpoch
       ? new Date(g.game.startTimeEpoch * 1000).toISOString()
-      : (g?.game?.startTime || g?.startTime || g?.gameTime);
+      : g?.game?.startTime || g?.startTime || g?.gameTime || null;
 
     const homeScore = g?.home?.score ?? g?.home_score ?? null;
     const awayScore = g?.away?.score ?? g?.away_score ?? null;
@@ -241,63 +243,101 @@ function normalizeTeamName(name) {
   const n = String(name).trim();
 
   const map = new Map([
-  // Short names used in your UI -> Canonical names
-  ["Boise St", "Boise State"],
-  ["Boise State", "Boise State"],
+    // Short names used in your UI -> Canonical names
+    ["Boise St", "Boise State"],
+    ["Boise State", "Boise State"],
 
-  ["Iowa", "Iowa"],
-  ["UC Davis", "UC Davis"],
+    ["Iowa", "Iowa"],
+    ["UC Davis", "UC Davis"],
 
-  ["Cal Poly", "Cal Poly"],
+    ["Cal Poly", "Cal Poly"],
 
-  ["Cal", "California"],
-  ["California", "California"],
+    ["Cal", "California"],
+    ["California", "California"],
 
-  ["Nevada", "Nevada"],
+    ["Nevada", "Nevada"],
 
-  ["Columbia", "Columbia"],
+    ["Columbia", "Columbia"],
 
-  ["Santa Clara", "Santa Clara"],
+    ["Santa Clara", "Santa Clara"],
 
-  ["Weber St", "Weber State"],
-  ["Weber State", "Weber State"],
+    ["Weber St", "Weber State"],
+    ["Weber State", "Weber State"],
 
-  ["Sac State", "Sacramento State"],
-  ["Sacramento St", "Sacramento State"],
-  ["Sacramento State", "Sacramento State"],
+    ["Sac State", "Sacramento State"],
+    ["Sacramento St", "Sacramento State"],
+    ["Sacramento State", "Sacramento State"],
 
-  ["Oklahoma", "Oklahoma"],
-  ["Oklahoma University", "Oklahoma"],
-  ["Oklahoma Sooners", "Oklahoma"],
+    ["Oklahoma", "Oklahoma"],
+    ["Oklahoma University", "Oklahoma"],
+    ["Oklahoma Sooners", "Oklahoma"],
 
-  ["Maine", "Maine"],
+    ["Maine", "Maine"],
 
-  ["Idaho St", "Idaho State"],
-  ["Idaho State", "Idaho State"],
+    ["Idaho St", "Idaho State"],
+    ["Idaho State", "Idaho State"],
 
-  ["Fresno", "Fresno State"],
-  ["Fresno St", "Fresno State"],
-  ["Fresno State", "Fresno State"],
+    ["Fresno", "Fresno State"],
+    ["Fresno St", "Fresno State"],
+    ["Fresno State", "Fresno State"],
 
-  ["SC State", "South Carolina State"],
-  ["South Carolina State", "South Carolina State"],
+    ["SC State", "South Carolina State"],
+    ["South Carolina State", "South Carolina State"],
 
-  ["Princeton", "Princeton"],
+    ["Princeton", "Princeton"],
 
-  ["Stanford Cardinal", "Stanford"],
-  ["Stanford", "Stanford"],
+    ["Stanford Cardinal", "Stanford"],
+    ["Stanford", "Stanford"],
 
-  ["Nebraska Kearney", "Nebraska-Kearney"],
-  ["Nebraska–Kearney", "Nebraska-Kearney"],
-  ["Nebraska-Kearney", "Nebraska-Kearney"],
+    ["Nebraska Kearney", "Nebraska-Kearney"],
+    ["Nebraska–Kearney", "Nebraska-Kearney"],
+    ["Nebraska-Kearney", "Nebraska-Kearney"],
 
-  ["Stanislaus St", "Stanislaus State"],
-  ["CSU Stanislaus", "Stanislaus State"],
-  ["Stanislaus State", "Stanislaus State"],
+    ["Stanislaus St", "Stanislaus State"],
+    ["CSU Stanislaus", "Stanislaus State"],
+    ["Stanislaus State", "Stanislaus State"],
 
-  ["Southern Oregon", "Southern Oregon"],
-]);
+    ["Southern Oregon", "Southern Oregon"]
+  ]);
 
   if (map.has(n)) return map.get(n);
   return n.replace(/\s+/g, " ");
+}
+
+export async function GET(req) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const range = (searchParams.get("range") || "week").toLowerCase();
+    const { startDate, endDate } = computeRange(range);
+
+    // Fetch both sources in parallel
+    const [ncaaPayload, espnPayload] = await Promise.all([
+      fetchJson(`${NCAA_API}/scoreboard/baseball/college-softball`),
+      fetchJson(ESPN_SCOREBOARD)
+    ]);
+
+    const ncaaGames = extractNcaaGames(ncaaPayload);
+    const espnGames = extractEspnGames(espnPayload);
+    const allGames = mergeGames(ncaaGames, espnGames);
+
+    // Filter by time window
+    const filtered = allGames.filter((g) => {
+      if (!g.startTime) return false;
+      const t = new Date(g.startTime).getTime();
+      return t >= startDate.getTime() && t <= endDate.getTime();
+    });
+
+    return Response.json({
+      range,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      count: filtered.length,
+      games: filtered
+    });
+  } catch (err) {
+    return Response.json(
+      { error: String(err?.message || err) },
+      { status: 500 }
+    );
+  }
 }
