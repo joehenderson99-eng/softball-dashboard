@@ -25,7 +25,6 @@ function formatLocalDateHeader(isoString) {
   }
 }
 
-// Date + Time in ONE string (date on LEFT of time)
 function formatLocalDateTime(isoString) {
   if (!isoString) return "";
   try {
@@ -38,7 +37,6 @@ function formatLocalDateTime(isoString) {
   }
 }
 
-// local day key for grouping
 function dateKeyLocal(isoString) {
   if (!isoString) return "unknown";
   const d = new Date(isoString);
@@ -53,10 +51,23 @@ function normalizeLabel(name) {
   return String(name).trim().replace(/\s+/g, " ");
 }
 
+function isWithinRecentDays(isoString, days) {
+  if (!isoString) return false;
+  const now = new Date();
+  const d = new Date(isoString);
+  const diffMs = now.getTime() - d.getTime();
+  const maxMs = days * 24 * 60 * 60 * 1000;
+  return diffMs >= 0 && diffMs <= maxMs;
+}
+
 function rankBadgeStyle(rank) {
   if (!rank) return null;
-  if (rank <= 10) return { border: "1px solid #d4b106", background: "#fff7d6", color: "#5c4a00" };
-  if (rank <= 25) return { border: "1px solid #2f54eb", background: "#e6f0ff", color: "#10239e" };
+  if (rank <= 10) {
+    return { border: "1px solid #d4b106", background: "#fff7d6", color: "#5c4a00" };
+  }
+  if (rank <= 25) {
+    return { border: "1px solid #2f54eb", background: "#e6f0ff", color: "#10239e" };
+  }
   return { border: "1px solid #bbb", background: "#f3f3f3", color: "#222" };
 }
 
@@ -80,10 +91,8 @@ function RankPill({ rank }) {
 }
 
 export default function Page() {
-  const [view, setView] = useState("today"); // today | week | month | season
+  const [view, setView] = useState("today");
   const [liveOnly, setLiveOnly] = useState(false);
-
-  // empty set => show ALL games
   const [selectedTeams, setSelectedTeams] = useState(() => new Set());
 
   const DEFAULT_PINNED = [
@@ -112,35 +121,29 @@ export default function Page() {
 
   const [pinnedTeams, setPinnedTeams] = useState(() => new Set(DEFAULT_PINNED));
   const [showAllTeams, setShowAllTeams] = useState(false);
-
-  // ✅ NEW: auto select pinned on startup (saved)
   const [autoSelectPinned, setAutoSelectPinned] = useState(true);
-
-  // ✅ NEW: hide/show pinned section (saved)
   const [showPinned, setShowPinned] = useState(true);
+
+  // ✅ NEW
+  const [keepRecentFinals, setKeepRecentFinals] = useState(true);
+  const [recentFinalDays, setRecentFinalDays] = useState(3);
 
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState("");
-
   const [teamSearch, setTeamSearch] = useState("");
 
-  // One-time migration to force pinned list
   useEffect(() => {
     try {
       const migrated = localStorage.getItem(PINNED_MIGRATION_KEY);
       if (migrated) return;
-
       setPinnedTeams(new Set(DEFAULT_PINNED));
       localStorage.setItem(PINNED_MIGRATION_KEY, "1");
-    } catch {
-      // ignore
-    }
+    } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load saved settings
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -150,29 +153,24 @@ export default function Page() {
       if (parsed?.view) setView(parsed.view);
       if (typeof parsed?.liveOnly === "boolean") setLiveOnly(parsed.liveOnly);
       if (typeof parsed?.showAllTeams === "boolean") setShowAllTeams(parsed.showAllTeams);
-
-      // ✅ NEW
       if (typeof parsed?.autoSelectPinned === "boolean") setAutoSelectPinned(parsed.autoSelectPinned);
       if (typeof parsed?.showPinned === "boolean") setShowPinned(parsed.showPinned);
+      if (typeof parsed?.keepRecentFinals === "boolean") setKeepRecentFinals(parsed.keepRecentFinals);
+      if (typeof parsed?.recentFinalDays === "number") setRecentFinalDays(parsed.recentFinalDays);
 
       if (Array.isArray(parsed?.selectedTeams)) setSelectedTeams(new Set(parsed.selectedTeams));
       if (Array.isArray(parsed?.pinnedTeams)) setPinnedTeams(new Set(parsed.pinnedTeams));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
-  // ✅ NEW: if enabled, auto-select pinned when there is no current selection
   useEffect(() => {
     if (!autoSelectPinned) return;
-
     setSelectedTeams((prev) => {
-      if (prev && prev.size > 0) return prev; // user already has a filter selection
-      return new Set(Array.from(pinnedTeams)); // start with pinned ON
+      if (prev && prev.size > 0) return prev;
+      return new Set(Array.from(pinnedTeams));
     });
   }, [autoSelectPinned, pinnedTeams]);
 
-  // Save settings
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -181,27 +179,44 @@ export default function Page() {
           view,
           liveOnly,
           showAllTeams,
-          autoSelectPinned, // ✅ NEW
-          showPinned,       // ✅ NEW
+          autoSelectPinned,
+          showPinned,
+          keepRecentFinals,
+          recentFinalDays,
           selectedTeams: Array.from(selectedTeams),
           pinnedTeams: Array.from(pinnedTeams)
         })
       );
-    } catch {
-      // ignore
-    }
-  }, [view, liveOnly, showAllTeams, autoSelectPinned, showPinned, selectedTeams, pinnedTeams]);
+    } catch {}
+  }, [
+    view,
+    liveOnly,
+    showAllTeams,
+    autoSelectPinned,
+    showPinned,
+    keepRecentFinals,
+    recentFinalDays,
+    selectedTeams,
+    pinnedTeams
+  ]);
 
   async function fetchGames() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, { cache: "no-store" });
+      const res = await fetch(`/api/games?range=${encodeURIComponent(view)}`, {
+        cache: "no-store"
+      });
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data = await res.json();
 
       setGames(Array.isArray(data?.games) ? data.games : []);
-      setLastUpdated(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      setLastUpdated(
+        new Date().toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit"
+        })
+      );
     } catch (e) {
       setError(e?.message || "Failed to load games.");
       setGames([]);
@@ -210,7 +225,6 @@ export default function Page() {
     }
   }
 
-  // Initial load + refresh loop
   useEffect(() => {
     fetchGames();
     const interval = setInterval(fetchGames, 30_000);
@@ -218,7 +232,6 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  // Build team list automatically from current games
   const allTeams = useMemo(() => {
     const s = new Set();
     for (const g of games) {
@@ -228,7 +241,6 @@ export default function Page() {
     return Array.from(s).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [games]);
 
-  // Search matches for pinning
   const searchMatches = useMemo(() => {
     const q = teamSearch.trim().toLowerCase();
     if (!q) return [];
@@ -251,7 +263,7 @@ export default function Page() {
   }
 
   function clearSelection() {
-    setSelectedTeams(new Set()); // empty => show all games (unless autoSelectPinned fills it next render)
+    setSelectedTeams(new Set());
   }
 
   function pinTeam(team) {
@@ -270,25 +282,41 @@ export default function Page() {
     });
   }
 
-  // Filter games
   const filtered = useMemo(() => {
     let list = Array.isArray(games) ? [...games] : [];
+    const hasSelected = selectedTeams.size > 0;
 
-    if (selectedTeams.size > 0) {
+    if (hasSelected) {
       list = list.filter((g) => {
         const h = normalizeLabel(g?.homeTeam);
         const a = normalizeLabel(g?.awayTeam);
-        return (h && selectedTeams.has(h)) || (a && selectedTeams.has(a));
+        const isSelectedTeam =
+          (h && selectedTeams.has(h)) || (a && selectedTeams.has(a));
+
+        if (!isSelectedTeam) return false;
+
+        if (
+          keepRecentFinals &&
+          g?.status === "FINAL" &&
+          isWithinRecentDays(g?.startTime, recentFinalDays)
+        ) {
+          return true;
+        }
+
+        return true;
       });
     }
 
     if (liveOnly) list = list.filter((g) => g?.status === "LIVE");
 
-    list.sort((a, b) => new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime());
-    return list;
-  }, [games, selectedTeams, liveOnly]);
+    list.sort(
+      (a, b) =>
+        new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime()
+    );
 
-  // Group by day (date headers)
+    return list;
+  }, [games, selectedTeams, liveOnly, keepRecentFinals, recentFinalDays]);
+
   const groupedByDay = useMemo(() => {
     const map = new Map();
     for (const g of filtered) {
@@ -319,7 +347,11 @@ export default function Page() {
           <button onClick={() => setView("season")} style={btnStyle(view === "season")}>Season</button>
 
           <label style={toggleStyle}>
-            <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={liveOnly}
+              onChange={(e) => setLiveOnly(e.target.checked)}
+            />
             Live games only
           </label>
 
@@ -330,7 +362,6 @@ export default function Page() {
       </header>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 10 }}>
-        {/* Teams */}
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <strong>Teams</strong>
@@ -368,12 +399,32 @@ export default function Page() {
                 All teams
               </label>
 
+              <label style={toggleStyle}>
+                <input
+                  type="checkbox"
+                  checked={keepRecentFinals}
+                  onChange={(e) => setKeepRecentFinals(e.target.checked)}
+                />
+                Keep recent finals
+              </label>
+
+              <select
+                value={recentFinalDays}
+                onChange={(e) => setRecentFinalDays(Number(e.target.value))}
+                style={selectStyle}
+              >
+                <option value={1}>1 day</option>
+                <option value={2}>2 days</option>
+                <option value={3}>3 days</option>
+                <option value={5}>5 days</option>
+                <option value={7}>7 days</option>
+              </select>
+
               <button onClick={selectAll} style={smallBtn}>Select all</button>
               <button onClick={clearSelection} style={smallBtn}>Clear</button>
             </div>
           </div>
 
-          {/* Pinned */}
           {showPinned ? (
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
@@ -407,15 +458,7 @@ export default function Page() {
                           </button>
                           <button
                             onClick={() => unpinTeam(t)}
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 999,
-                              border: "1px solid #ddd",
-                              background: "#fff",
-                              cursor: "pointer",
-                              fontWeight: 900
-                            }}
+                            style={xBtn}
                             title="Remove from pinned"
                           >
                             ×
@@ -428,7 +471,6 @@ export default function Page() {
             </div>
           ) : null}
 
-          {/* Search + Add to pinned */}
           <div style={{ marginTop: 14 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <input
@@ -455,15 +497,7 @@ export default function Page() {
                     <button
                       key={t}
                       onClick={() => pinTeam(t)}
-                      style={{
-                        padding: "8px 10px",
-                        borderRadius: 999,
-                        border: "1px solid #ddd",
-                        background: "#fff",
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: "pointer"
-                      }}
+                      style={addChipBtn}
                       title="Add to pinned"
                     >
                       + {t}
@@ -474,7 +508,6 @@ export default function Page() {
             )}
           </div>
 
-          {/* All teams list */}
           {showAllTeams ? (
             <div style={{ marginTop: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -510,7 +543,6 @@ export default function Page() {
           ) : null}
         </section>
 
-        {/* Games */}
         <section style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <strong>Games</strong>
@@ -536,7 +568,9 @@ export default function Page() {
                             <RankPill rank={g.awayRank} />
                             <span>{g.awayTeam}</span>
                             {g.awayRecord ? (
-                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>({g.awayRecord})</span>
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
+                                ({g.awayRecord})
+                              </span>
                             ) : null}
                           </span>
 
@@ -546,7 +580,9 @@ export default function Page() {
                             <RankPill rank={g.homeRank} />
                             <span>{g.homeTeam}</span>
                             {g.homeRecord ? (
-                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>({g.homeRecord})</span>
+                              <span style={{ fontWeight: 600, color: "#555", fontSize: 12 }}>
+                                ({g.homeRecord})
+                              </span>
                             ) : null}
                           </span>
                         </div>
@@ -564,17 +600,23 @@ export default function Page() {
                         </span>
                       </div>
 
-                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                         {g.watchUrl ? (
                           <a href={g.watchUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                            📺 Watch{g.watchLabel ? ` • ${g.watchLabel}` : ""}
+                            📺 Watch
                           </a>
                         ) : null}
+
+                        {g.watchLabel ? (
+                          <span style={networkTagStyle}>Network: {g.watchLabel}</span>
+                        ) : null}
+
                         {g.gameUrl ? (
                           <a href={g.gameUrl} target="_blank" rel="noreferrer" style={linkBtn}>
                             📋 Game info
                           </a>
                         ) : null}
+
                         {g.boxUrl ? (
                           <a href={g.boxUrl} target="_blank" rel="noreferrer" style={linkBtn}>
                             📊 Box score
@@ -588,7 +630,9 @@ export default function Page() {
             ))}
 
             {!loading && filtered.length === 0 ? (
-              <div style={{ color: "#555", marginTop: 8 }}>No matching games found in this view/date range.</div>
+              <div style={{ color: "#555", marginTop: 8 }}>
+                No matching games found in this view/date range.
+              </div>
             ) : null}
           </div>
         </section>
@@ -609,7 +653,16 @@ function StatusPill({ status }) {
   };
   const s = map[status] || map.SCHEDULED;
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, background: s.bg, color: s.fg, fontSize: 12, fontWeight: 900 }}>
+    <span
+      style={{
+        padding: "3px 10px",
+        borderRadius: 999,
+        background: s.bg,
+        color: s.fg,
+        fontSize: 12,
+        fontWeight: 900
+      }}
+    >
       {s.text}
     </span>
   );
@@ -639,12 +692,42 @@ const toggleStyle = {
   background: "#fff"
 };
 
+const selectStyle = {
+  padding: "8px 10px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  background: "#fff",
+  fontWeight: 900,
+  fontSize: 12,
+  cursor: "pointer"
+};
+
 const smallBtn = {
   padding: "8px 10px",
   borderRadius: 12,
   border: "1px solid #ddd",
   background: "#fff",
   fontWeight: 900,
+  cursor: "pointer"
+};
+
+const xBtn = {
+  width: 28,
+  height: 28,
+  borderRadius: 999,
+  border: "1px solid #ddd",
+  background: "#fff",
+  cursor: "pointer",
+  fontWeight: 900
+};
+
+const addChipBtn = {
+  padding: "8px 10px",
+  borderRadius: 999,
+  border: "1px solid #ddd",
+  background: "#fff",
+  fontSize: 13,
+  fontWeight: 800,
   cursor: "pointer"
 };
 
@@ -668,7 +751,18 @@ const linkBtn = {
   fontSize: 13
 };
 
-// Styles for “day changes”
+const networkTagStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "8px 10px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  background: "#fafafa",
+  color: "#111",
+  fontWeight: 800,
+  fontSize: 13
+};
+
 const dayHeaderStyle = {
   position: "sticky",
   top: 0,
