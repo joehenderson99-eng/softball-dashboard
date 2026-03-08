@@ -1,4 +1,3 @@
-// app/api/games/route.js
 export const runtime = "nodejs";
 
 const ESPN_SCOREBOARD =
@@ -7,8 +6,7 @@ const ESPN_SCOREBOARD =
 async function fetchJson(url) {
   const res = await fetch(url, {
     headers: { "user-agent": "softball-dashboard/1.0" },
-    // Vercel edge caching can be weird; keep it fresh:
-    cache: "no-store",
+    cache: "no-store"
   });
   if (!res.ok) throw new Error(`Upstream failed ${res.status} for ${url}`);
   return res.json();
@@ -47,7 +45,7 @@ function getSeasonRange(now = new Date()) {
   if (now > aug1) {
     return {
       start: startOfDay(new Date(y + 1, 1, 1)),
-      end: endOfDay(new Date(y + 1, 7, 1)),
+      end: endOfDay(new Date(y + 1, 7, 1))
     };
   }
   if (now < feb1) {
@@ -58,7 +56,8 @@ function getSeasonRange(now = new Date()) {
 
 function computeRange(range) {
   const now = new Date();
-  let startDate, endDate;
+  let startDate;
+  let endDate;
 
   if (range === "today") {
     startDate = startOfDay(now);
@@ -88,46 +87,59 @@ function yyyymmdd(d) {
   return `${y}${m}${day}`;
 }
 
-/**
- * Normalize team name into “school-ish” label.
- * ESPN often includes mascot in displayName; shortDisplayName is usually school.
- */
-function normalizeTeamNameFromCompetitor(comp) {
-  const team = comp?.team;
-  const raw =
-    team?.shortDisplayName ||
-    team?.displayName ||
-    team?.name ||
-    "";
-  return String(raw).trim().replace(/\s+/g, " ");
+function normalizeTeamName(name) {
+  if (!name) return "";
+  return String(name).trim().replace(/\s+/g, " ");
 }
 
 function pickRecordSummary(comp) {
-  // ESPN often: competitor.records[0].summary => "12-5" (sometimes includes conference etc in other entries)
   const recs = Array.isArray(comp?.records) ? comp.records : [];
   const summary = recs.find((r) => typeof r?.summary === "string")?.summary;
   return summary || null;
 }
 
-function pickWatchLink(ev, comp) {
-  // Prefer explicit "watch" link if present
+function pickWatchData(ev, comp) {
   const links = Array.isArray(ev?.links) ? ev.links : [];
-  const watch = links.find((l) => Array.isArray(l?.rel) && l.rel.some((r) => String(r).toLowerCase().includes("watch")));
-  const desktop = links.find((l) => Array.isArray(l?.rel) && l.rel.some((r) => String(r).toLowerCase().includes("desktop")));
-  const any = links[0];
 
-  // Sometimes broadcasts exist but no watch link; still helpful to show provider label
-  const url = watch?.href || desktop?.href || any?.href || null;
+  const watchLink =
+    links.find(
+      (l) =>
+        Array.isArray(l?.rel) &&
+        l.rel.some((r) => String(r).toLowerCase().includes("watch"))
+    )?.href || null;
 
-  // Broadcast/provider label
+  const desktopLink =
+    links.find(
+      (l) =>
+        Array.isArray(l?.rel) &&
+        l.rel.some((r) => String(r).toLowerCase().includes("desktop"))
+    )?.href ||
+    links[0]?.href ||
+    null;
+
+  const watchUrl = watchLink || desktopLink;
+
   const broadcasts = Array.isArray(comp?.broadcasts) ? comp.broadcasts : [];
-  const names = broadcasts
-    .map((b) => b?.names?.join?.(", ") || b?.name || b?.market || b?.type?.shortName || b?.type?.name)
+  const networkNames = broadcasts
+    .flatMap((b) => {
+      if (Array.isArray(b?.names)) return b.names;
+      if (typeof b?.name === "string") return [b.name];
+      if (typeof b?.market === "string") return [b.market];
+      if (typeof b?.type?.shortName === "string") return [b.type.shortName];
+      if (typeof b?.type?.name === "string") return [b.type.name];
+      return [];
+    })
+    .map((x) => String(x).trim())
     .filter(Boolean);
 
-  const label = names.length ? names.join(" • ") : null;
+  const uniqueNames = [...new Set(networkNames)];
+  const watchLabel = uniqueNames.length ? uniqueNames.join(" / ") : null;
 
-  return { watchUrl: url, watchLabel: label };
+  return {
+    watchUrl,
+    watchLabel,
+    gameUrl: desktopLink
+  };
 }
 
 function extractEspnGames(payload) {
@@ -143,8 +155,12 @@ function extractEspnGames(payload) {
     const away = competitors.find((c) => c.homeAway === "away");
     if (!home || !away) continue;
 
-    const homeTeam = normalizeTeamNameFromCompetitor(home);
-    const awayTeam = normalizeTeamNameFromCompetitor(away);
+    const homeTeam = normalizeTeamName(
+      home?.team?.shortDisplayName || home?.team?.displayName || home?.team?.name || ""
+    );
+    const awayTeam = normalizeTeamName(
+      away?.team?.shortDisplayName || away?.team?.displayName || away?.team?.name || ""
+    );
     if (!homeTeam || !awayTeam) continue;
 
     const startTime = comp?.date || ev?.date || null;
@@ -156,15 +172,10 @@ function extractEspnGames(payload) {
     const homeRank = home?.curatedRank?.current ?? null;
     const awayRank = away?.curatedRank?.current ?? null;
 
-    const gameUrl =
-      ev?.links?.find((l) => Array.isArray(l?.rel) && l.rel.includes("desktop"))?.href ||
-      ev?.links?.[0]?.href ||
-      null;
-
-    const { watchUrl, watchLabel } = pickWatchLink(ev, comp);
-
     const homeRecord = pickRecordSummary(home);
     const awayRecord = pickRecordSummary(away);
+
+    const { watchUrl, watchLabel, gameUrl } = pickWatchData(ev, comp);
 
     const id =
       ev?.id ||
@@ -185,7 +196,7 @@ function extractEspnGames(payload) {
       gameUrl,
       boxUrl: gameUrl,
       watchUrl,
-      watchLabel,
+      watchLabel
     });
   }
 
@@ -199,11 +210,14 @@ export async function GET(req) {
 
     const { startDate, endDate } = computeRange(range);
 
-    // Keep Vercel stable (scoreboard is per-day)
-    const MAX_DAYS = range === "season" ? 60 : 31;
+    // ✅ Pull a few extra PREVIOUS days so finals remain visible after games end
+    const RECENT_FINAL_LOOKBACK_DAYS = 3;
+    const fetchStartDate = startOfDay(addDays(startDate, -RECENT_FINAL_LOOKBACK_DAYS));
+
+    const MAX_DAYS = range === "season" ? 65 : 35;
 
     const dates = [];
-    for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
+    for (let d = new Date(fetchStartDate); d <= endDate; d = addDays(d, 1)) {
       dates.push(new Date(d));
       if (dates.length >= MAX_DAYS) break;
     }
@@ -215,25 +229,22 @@ export async function GET(req) {
     const all = [];
     for (const p of payloads) all.push(...extractEspnGames(p));
 
-    // Dedup
     const byId = new Map();
     for (const g of all) byId.set(g.id, g);
-    const allGames = Array.from(byId.values());
 
-    // Window filter
-    const filtered = allGames.filter((g) => {
-      if (!g.startTime) return false;
-      const t = new Date(g.startTime).getTime();
-      return t >= startDate.getTime() && t <= endDate.getTime();
-    });
+    const allGames = Array.from(byId.values()).sort(
+      (a, b) => new Date(a?.startTime || 0).getTime() - new Date(b?.startTime || 0).getTime()
+    );
 
     return Response.json({
       range,
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
+      requestedStartDate: startDate.toISOString(),
+      requestedEndDate: endDate.toISOString(),
+      fetchedStartDate: fetchStartDate.toISOString(),
+      fetchedEndDate: endDate.toISOString(),
       fetchedDays: dates.length,
-      count: filtered.length,
-      games: filtered,
+      count: allGames.length,
+      games: allGames
     });
   } catch (err) {
     return Response.json({ error: String(err?.message || err) }, { status: 500 });
